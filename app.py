@@ -2,10 +2,19 @@ import streamlit as st
 import pandas as pd
 import engine
 import random
+import json
 
 st.set_page_config(page_title="大乐透量化预测系统", layout="wide")
+
+# 🔥 核心多用户入口：在左侧边栏输入专属ID
+st.sidebar.header("👤 用户中心")
+user_id = st.sidebar.text_input("请输入你的专属昵称/ID：", value="default")
+if not user_id.strip():
+    st.sidebar.warning("请先输入ID才能使用哦！")
+    st.stop()
+
 st.title("🧬 大乐透全维量化预测系统")
-st.caption("融合：贝叶斯后验 · Dirichlet共轭 · 马尔科夫链 · 几何生存函数 · 超几何模拟")
+st.caption(f"当前登录账号：**{user_id}** | 融合：贝叶斯推断 · 马尔科夫链 · 独立经验库")
 
 engine.init_db()
 if engine.draw_count() == 0:
@@ -14,18 +23,16 @@ if engine.draw_count() == 0:
 
 weights = engine.get_advanced_weights()
 if not weights:
-    st.warning("数据量不足（至少需要10期），无法建立数学模型。")
+    st.warning("数据量不足，无法建立数学模型。")
     st.stop()
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "🎯 综合预测与Top7", "📈 趋势联系", "🔬 深度科学生成", "📋 模拟记录", "💡 期望与风险管理"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "🎯 综合预测", "📈 趋势联系", "🔬 深度生成", "📋 我的模拟记录", "🧠 我的经验修正", "💡 风控"
 ])
 
 with tab1:
     st.markdown("### 🌟 前区 Top 7 黄金参考号")
-    st.caption("综合了贝叶斯后验概率、马尔科夫转移概率与遗漏生存函数，推演出的最高概率号码。")
     sorted_f = sorted(weights["front_prob"].items(), key=lambda x: x[1], reverse=True)[:7]
-    
     cols = st.columns(7)
     for i, (num, prob) in enumerate(sorted_f):
         with cols[i]:
@@ -39,75 +46,70 @@ with tab1:
             st.metric(label=f"号码 {num:02d}", value=f"{prob}%")
 
     st.divider()
-    
-    st.markdown("### 📊 数据模型深度解析")
-    with st.expander("点击查看：前区贝叶斯后验 & 马尔科夫链原始数据"):
-        df_f = pd.DataFrame({
-            "号码": range(1, 36),
-            "贝叶斯后验概率": [round(weights["bayes_prob"][n]*100, 2) for n in range(1, 36)],
-            "上期开出转移次数": [weights["front_trans"][n] for n in range(1, 36)],
-            "当前遗漏期数": [weights["front_omit"][n] for n in range(1, 36)]
-        }).sort_values("贝叶斯后验概率", ascending=False)
-        st.dataframe(df_f, use_container_width=True, hide_index=True)
-
-    # 🔥 最下方的高亮推荐栏目
-    st.divider()
-    st.markdown("### 🏆 最终量化决策推荐（基于全维模型权重）")
-    
+    st.markdown("### 🏆 最终量化决策推荐")
     top7_front = sorted([num for num, prob in sorted_f])
     top3_back = sorted([num for num, prob in sorted_b])
-    
-    front_str = "  ".join([f"{n:02d}" for n in top7_front])
-    back_str = "  ".join([f"{n:02d}" for n in top3_back])
-    
-    st.success(f"**🔥 前区精选大底 (Top 7)：** \n\n## {front_str}")
-    st.info(f"**🔥 后区精选大底 (Top 3)：** \n\n## {back_str}")
-    
-    st.caption("💡 提示：您可以从上述 Top7 和 Top3 中，按照冷热搭配（如3热2冷）自由组合，或者直接去「深度科学生成」页面提取系统自动约束出的 5+2 组合。")
+    st.success(f"**🔥 前区精选 (Top 7)：** \n\n## {'  '.join([f'{n:02d}' for n in top7_front])}")
+    st.info(f"**🔥 后区精选 (Top 3)：** \n\n## {'  '.join([f'{n:02d}' for n in top3_back])}")
 
 with tab2:
-    st.markdown("### 📈 趋势联系与独立性检验")
-    st.info("基于皮尔逊相关系数与卡方检验，我们确认大乐透各个号码之间“互相独立”。这意味着冷热交替不会影响下期开奖，所有关联都是统计错觉。")
-    
+    st.markdown("### 📈 趋势联系")
     rows = engine.get_all_draws()
     if len(rows) >= 2:
-        st.markdown(f"**最新一期:** {rows[0][0]} | 前区: {rows[0][2:7]} | 后区: {rows[0][7:9]}")
-        st.markdown(f"**上一期:** {rows[1][0]} | 前区: {rows[1][2:7]} | 后区: {rows[1][7:9]}")
-        
+        st.markdown(f"**最新一期:** {rows[0][0]} | 前区: {rows[0][2:7]}")
         repeats = len(set(rows[0][2:7]) & set(rows[1][2:7]))
-        st.metric("重号数 (落号)", f"{repeats} 个", "历史均值: 0~2个")
+        st.metric("重号数", f"{repeats} 个")
 
 with tab3:
-    st.markdown("### 🔬 蒙特卡洛模拟生成")
-    st.caption("结合上述所有数学模型，进行 8000 次全量模拟，并通过重号/邻号约束过滤。")
-    target = st.text_input("目标期号（选填）", placeholder="例如 26124")
+    st.markdown("### 🔬 蒙特卡洛生成 (读取我的专属经验)")
+    st.caption("系统已提取【你】从第1次到现在的所有累积误差，动态调整过滤边界。")
+    target = st.text_input("目标期号（选填，务必填入）", placeholder="例如 26124")
     if st.button("🧬 启动量化模拟", type="primary"):
-        with st.spinner("正在进行马尔科夫链演化与贝叶斯采样..."):
+        with st.spinner("正在读取你的专属经验库并进行采样..."):
             rows = engine.get_all_draws()
             last_front = rows[0][2:7] if rows else None
-            front, back = engine.generate_scientific(weights, last_front)
-            engine.save_prediction(weights, target, front, back)
+            # 传入 user_id
+            front, back = engine.generate_scientific(weights, last_front, user_id)
+            engine.save_prediction(weights, target, front, back, user_id)
             st.success(f"🎯 最终推断 -> 前区：{front}  |  后区：{back}")
 
 with tab4:
-    st.subheader("所有模拟记录")
-    preds = engine.get_predictions()
+    st.subheader(f"📋 {user_id} 的模拟记录")
+    # 只查询当前用户的记录
+    preds = engine.get_predictions(user_id)
     if preds:
         df = pd.DataFrame(preds, columns=["ID", "期号", "前区", "后区", "时间", "结果", "前区命中", "后区命中"])
         st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        st.info("还没有属于你的记录，快去“深度生成”生成一注吧！")
+        
+    if st.button("🔄 同步复盘所有记录"):
+        engine.review_all()
+        st.success("复盘完成！快去看看经验库有没有更新！")
+        st.rerun()
 
 with tab5:
-    st.markdown("### 💡 极限定理与风险控制指导")
-    st.error("🚨 **大数定律与破产概率**：任何预测模型都无法战胜“独立随机事件”的物理本质。买得越多，结果越趋近于极低的数学期望。不要试图用加倍投注（马丁格尔策略）去回本，破产概率会呈指数上升。")
+    st.subheader(f"🧠 {user_id} 的全局经验教训库")
+    st.markdown("这里记录了你从第1次到第N次所有的数学偏差。")
     
-    st.markdown("#### 1. 超几何分布与期望收益")
-    c_total = engine.comb(35, 5) * engine.comb(12, 2)
-    st.write(f"大乐透总组合数：**{c_total:,}** 种。")
-    st.write(f"一等奖（5+2）理论概率：**1 / {c_total:,}**。")
-    st.write(f"数学期望：假设奖池为1亿，单注2元，期望收益远低于2元，属于**负和游戏**。")
+    # 只读取当前用户的经验
+    correction = engine.get_global_correction(user_id)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("我的累积教训记录", f"{correction['total_lessons']} 条")
+    c2.metric("我的和值平均偏差", f"{correction['avg_sum_delta']}")
+    c3.metric("我的奇偶平均偏差", f"{correction['avg_odd_delta']}")
     
-    st.markdown("#### 2. 凯利准则 (Kelly Criterion) 的应用")
-    st.info("凯利公式用于计算最佳下注比例：\(f^* = (bp - q) / b\)。因为大乐透的胜率 \(p\) 极小，且赔率 \(b\) 为固定值，算出的 \(f^*\) 是负数。**科学结论：理性的下注额永远是 0**。")
+    if correction['total_lessons'] > 0:
+        st.info(f"📌 **【你】的模型当前修正状态**：下一次生成时，和值基准将自动偏移 `{correction['avg_sum_delta']}` 点，以逼近真实开奖的期望。")
     
-    st.markdown("#### 3. 理性购彩指导")
-    st.success("✅ 把这款软件当做**统计学和贝叶斯推断的练习场**，享受数据可视化的乐趣。\n\n✅ 每次投入不超过一杯奶茶钱，不中当做慈善，中了当做奇迹。\n\n✅ 永远不要相信“必中规律”，只相信数学模型的演算。")
+    st.markdown("#### 📝 我的历史偏差明细表")
+    lessons = engine.get_all_lessons(user_id)
+    if lessons:
+        l_df = pd.DataFrame(lessons, columns=["期号", "预测和值", "实际和值", "和值偏差", "预测奇数", "实际奇数", "奇数偏差", "归因分类"])
+        st.dataframe(l_df, use_container_width=True, hide_index=True)
+    else:
+        st.success("你的经验库目前还是空白的。等你复盘后，这里会自动生成数据。")
+
+with tab6:
+    st.markdown("### 💡 风控")
+    st.error("大数定律不可违背，模型只能逼近历史期望，无法预知未来。")

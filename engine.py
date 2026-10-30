@@ -24,6 +24,14 @@ def draw_count():
     conn.close()
     return n
 
+# 👇 就是下面这个函数，之前漏掉了，现在补上！
+def get_all_draws():
+    init_db()
+    conn = get_conn()
+    rows = conn.execute("SELECT period, date, front1, front2, front3, front4, front5, back1, back2 FROM draws ORDER BY period DESC").fetchall()
+    conn.close()
+    return rows
+
 def compute_weights():
     init_db()
     conn = get_conn()

@@ -14,16 +14,6 @@ def init_db():
     conn = get_conn()
     conn.execute("CREATE TABLE IF NOT EXISTS draws (period TEXT PRIMARY KEY, date TEXT, front1 INTEGER, front2 INTEGER, front3 INTEGER, front4 INTEGER, front5 INTEGER, back1 INTEGER, back2 INTEGER)")
     conn.execute("CREATE TABLE IF NOT EXISTS predictions (id INTEGER PRIMARY KEY AUTOINCREMENT, target_period TEXT, front_numbers TEXT, back_numbers TEXT, front_probs TEXT, back_probs TEXT, created_at TEXT, hit_level TEXT DEFAULT '待开奖', hit_front INTEGER DEFAULT 0, hit_back INTEGER DEFAULT 0)")
-    
-    # 核心保底方案：如果数据库为空，自动塞入 100 期模拟数据！
-    count = conn.execute("SELECT COUNT(*) FROM draws").fetchone()[0]
-    if count == 0:
-        for i in range(1, 101):
-            period = str(24000 + i)
-            f = sorted(random.sample(FRONT_POOL, 5))
-            b = sorted(random.sample(BACK_POOL, 2))
-            conn.execute("INSERT INTO draws VALUES (?,?,?,?,?,?,?,?,?)", (period, "2024-01-01", f[0], f[1], f[2], f[3], f[4], b[0], b[1]))
-    
     conn.commit()
     conn.close()
 

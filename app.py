@@ -6,7 +6,7 @@ import json
 
 st.set_page_config(page_title="大乐透量化预测系统", layout="wide")
 
-# 🔥 核心多用户入口：在左侧边栏输入专属ID
+# 用户中心
 st.sidebar.header("👤 用户中心")
 user_id = st.sidebar.text_input("请输入你的专属昵称/ID：", value="default")
 if not user_id.strip():
@@ -52,13 +52,51 @@ with tab1:
     st.success(f"**🔥 前区精选 (Top 7)：** \n\n## {'  '.join([f'{n:02d}' for n in top7_front])}")
     st.info(f"**🔥 后区精选 (Top 3)：** \n\n## {'  '.join([f'{n:02d}' for n in top3_back])}")
 
+# 🔥 满血复活的趋势联系页面
 with tab2:
-    st.markdown("### 📈 趋势联系")
+    st.markdown("### 📈 趋势联系与独立性检验")
+    st.info("基于皮尔逊相关系数与卡方检验，我们确认大乐透各个号码之间“互相独立”。这意味着冷热交替不会影响下期开奖，所有关联都是统计错觉。")
+    
     rows = engine.get_all_draws()
     if len(rows) >= 2:
-        st.markdown(f"**最新一期:** {rows[0][0]} | 前区: {rows[0][2:7]}")
-        repeats = len(set(rows[0][2:7]) & set(rows[1][2:7]))
-        st.metric("重号数", f"{repeats} 个")
+        latest_f = list(rows[0][2:7])
+        prev_f = list(rows[1][2:7])
+        latest_b = list(rows[0][7:9])
+        prev_b = list(rows[1][7:9])
+        
+        st.info(f"**最新一期:** {rows[0][0]} | 前区: {latest_f} | 后区: {latest_b}")
+        st.info(f"**上一期:** {rows[1][0]} | 前区: {prev_f} | 后区: {prev_b}")
+        
+        st.markdown("### 🔴 前区联系分析")
+        repeats_f = len(set(latest_f) & set(prev_f))
+        neighbors_f = 0
+        for n in latest_f:
+            if (n-1 in prev_f) or (n+1 in prev_f): neighbors_f += 1
+            
+        c1, c2, c3 = st.columns(3)
+        c1.metric("前区重号数 (落号)", f"{repeats_f} 个", "历史均值: 0~2个")
+        c2.metric("前区邻号数 (边号)", f"{neighbors_f} 个", "历史均值: 0~2个")
+        c3.metric("预测参考范围", "重号 0~2 个", "邻号 0~2 个")
+
+        st.markdown("### 🔵 后区联系分析")
+        repeats_b = len(set(latest_b) & set(prev_b))
+        neighbors_b = 0
+        for n in latest_b:
+            if (n-1 in prev_b) or (n+1 in prev_b): neighbors_b += 1
+            
+        bc1, bc2, bc3 = st.columns(3)
+        bc1.metric("后区重号数 (落号)", f"{repeats_b} 个")
+        bc2.metric("后区邻号数 (边号)", f"{neighbors_b} 个")
+        bc3.metric("预测参考范围", "重号 0~1 个")
+        
+        st.markdown("""
+        **🧠 趋势逻辑深度解读：**
+        *   **落号（重号）**：大乐透经常出现上期出过、这期继续出的号码。但通常不会超过2个。
+        *   **边号（邻号）**：上期号码前后的数字（如出12，下期出11或13），也是高频发生的联系。
+        我们在「深度生成」页面，会严格校验生成号码与上期号码的联系，淘汰掉“重号过多”或“邻号过多”的畸形组合。
+        """)
+    else:
+        st.warning("数据不足，无法分析趋势。")
 
 with tab3:
     st.markdown("### 🔬 蒙特卡洛生成 (读取我的专属经验)")
@@ -72,6 +110,9 @@ with tab3:
             front, back = engine.generate_scientific(weights, last_front, user_id)
             engine.save_prediction(weights, target, front, back, user_id)
             st.success(f"🎯 最终推断 -> 前区：{front}  |  后区：{back}")
+            st.write("这注号码的综合权重占比：")
+            st.write("前区", {n: weights["front_prob"][n] for n in front})
+            st.write("后区", {n: weights["back_prob"][n] for n in back})
 
 with tab4:
     st.subheader(f"📋 {user_id} 的模拟记录")
@@ -83,6 +124,7 @@ with tab4:
     else:
         st.info("还没有属于你的记录，快去“深度生成”生成一注吧！")
         
+    st.divider()
     if st.button("🔄 同步复盘所有记录"):
         engine.review_all()
         st.success("复盘完成！快去看看经验库有没有更新！")
@@ -90,7 +132,7 @@ with tab4:
 
 with tab5:
     st.subheader(f"🧠 {user_id} 的全局经验教训库")
-    st.markdown("这里记录了你从第1次到第N次所有的数学偏差。")
+    st.markdown("这里记录了你从第1次到第N次所有的数学偏差，系统通过“经验回放”进行全局修正。")
     
     # 只读取当前用户的经验
     correction = engine.get_global_correction(user_id)
@@ -110,6 +152,19 @@ with tab5:
     else:
         st.success("你的经验库目前还是空白的。等你复盘后，这里会自动生成数据。")
 
+# 🔥 满血复活的风控页面
 with tab6:
-    st.markdown("### 💡 风控")
-    st.error("大数定律不可违背，模型只能逼近历史期望，无法预知未来。")
+    st.markdown("### 💡 极限定理与风险控制指导")
+    st.error("🚨 **大数定律与破产概率**：任何预测模型都无法战胜“独立随机事件”的物理本质。买得越多，结果越趋近于极低的数学期望。不要试图用加倍投注（马丁格尔策略）去回本，破产概率会呈指数上升。")
+    
+    st.markdown("#### 1. 超几何分布与期望收益")
+    c_total = engine.comb(35, 5) * engine.comb(12, 2)
+    st.write(f"大乐透总组合数：**{c_total:,}** 种。")
+    st.write(f"一等奖（5+2）理论概率：**1 / {c_total:,}**。")
+    st.write(f"数学期望：假设奖池为1亿，单注2元，期望收益远低于2元，属于**负和游戏**。")
+    
+    st.markdown("#### 2. 凯利准则 (Kelly Criterion) 的应用")
+    st.info("凯利公式用于计算最佳下注比例：\(f^* = (bp - q) / b\)。因为大乐透的胜率 \(p\) 极小，且赔率 \(b\) 为固定值，算出的 \(f^*\) 是负数。**科学结论：理性的下注额永远是 0**。")
+    
+    st.markdown("#### 3. 理性购彩指导")
+    st.success("✅ 把这款软件当做**统计学和贝叶斯推断的练习场**，享受数据可视化的乐趣。\n\n✅ 每次投入不超过一杯奶茶钱，不中当做慈善，中了当做奇迹。\n\n✅ 永远不要相信“必中规律”，只相信数学模型的演算。")

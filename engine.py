@@ -33,16 +33,13 @@ def get_all_draws():
     conn.close()
     return rows
 
-# 超几何分布组合数计算
 def comb(n, m):
     if m == 0 or m == n: return 1
     return math.factorial(n) // (math.factorial(m) * math.factorial(n - m))
 
-# 全量高级数学模型
 def get_advanced_weights():
     rows = get_all_draws()
     if len(rows) < 10: return None
-    
     total = len(rows)
     
     f_freq = Counter()
@@ -66,7 +63,6 @@ def get_advanced_weights():
         for n in curr_nums:
             if n in prev_nums: f_trans[n] += 1
 
-    # 贝叶斯后验估计
     bayes_prob = {}
     for n in range(1, 36):
         alpha = 1 + f_freq[n]
@@ -74,13 +70,11 @@ def get_advanced_weights():
         if beta_param < 1: beta_param = 1
         bayes_prob[n] = alpha / (alpha + beta_param)
         
-    # 后区 Dirichlet 平滑
     dirichlet_prob = {}
     total_b_draws = total * 2
     for n in range(1, 13):
         dirichlet_prob[n] = (b_freq[n] + 1) / (total_b_draws + 12)
 
-    # 综合权重融合
     f_score = {}
     for n in range(1, 36):
         omit_score = 1.0 / (f_omit[n] + 1.5)
@@ -106,14 +100,11 @@ def get_advanced_weights():
         "total_draws": total
     }
 
-# 科学模拟生成
 def generate_scientific(weights, last_front):
     fw = weights["front_prob"]
     bw = weights["back_prob"]
-    
     best_candidate = None
     highest_score = -1
-
     for _ in range(8000):
         available = list(range(1, 36))
         front = []
@@ -123,7 +114,6 @@ def generate_scientific(weights, last_front):
             front.append(pick)
             available.remove(pick)
         front.sort()
-
         bavail = list(range(1, 13))
         back = []
         for _ in range(2):
@@ -132,24 +122,20 @@ def generate_scientific(weights, last_front):
             back.append(pick)
             bavail.remove(pick)
         back.sort()
-
         s = sum(front)
         if s < 75 or s > 110: continue
         odd = sum(1 for n in front if n % 2 == 1)
         if odd not in (2, 3): continue
-        
         if last_front:
             repeats = len(set(front) & set(last_front))
             neighbors = 0
             for n in front:
                 if (n-1 in last_front) or (n+1 in last_front): neighbors += 1
             if repeats > 2 or neighbors > 2: continue
-
         score = sum([fw[n] for n in front]) + sum([bw[n] for n in back])
         if score > highest_score:
             highest_score = score
             best_candidate = (front, back)
-
     if not best_candidate:
         return sorted(random.sample(range(1, 36), 5)), sorted(random.sample(range(1, 13), 2))
     return best_candidate

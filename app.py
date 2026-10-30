@@ -14,7 +14,8 @@ if engine.draw_count() == 0:
 
 weights = engine.compute_weights()
 
-tab1, tab2, tab3, tab4 = st.tabs(["📊 概率总览", "🎲 生成一注", "📋 模拟记录", "🔄 复盘反推"])
+# 这里增加了第五个标签页：📅 历史开奖
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 概率总览", "🎲 生成一注", "📋 模拟记录", "🔄 复盘反推", "📅 历史开奖"])
 
 with tab1:
     st.subheader("前区号码权重占比（%）")
@@ -58,3 +59,20 @@ with tab4:
         engine.review_all()
         st.success("复盘完成，去“模拟记录”看结果。")
         st.rerun()
+
+with tab5:
+    st.subheader("历史开奖记录（真实数据）")
+    draws = engine.get_all_draws()
+    if not draws:
+        st.info("暂无历史数据，请确认 dlt.db 已经上传。")
+    else:
+        # 把数据库里的数据转成好看的表格
+        draw_df = pd.DataFrame(draws, columns=["期号", "开奖日期", "前区1", "前区2", "前区3", "前区4", "前区5", "后区1", "后区2"])
+        
+        # 拼一个“完整号码”列，方便查看
+        draw_df["前区号码"] = draw_df.apply(lambda x: f"{x['前区1']:02d} {x['前区2']:02d} {x['前区3']:02d} {x['前区4']:02d} {x['前区5']:02d}", axis=1)
+        draw_df["后区号码"] = draw_df.apply(lambda x: f"{x['后区1']:02d} {x['后区2']:02d}", axis=1)
+        
+        # 只展示需要的列
+        show_df = draw_df[["期号", "开奖日期", "前区号码", "后区号码"]]
+        st.dataframe(show_df, use_container_width=True, hide_index=True)

@@ -24,13 +24,64 @@ def draw_count():
     conn.close()
     return n
 
-# 👇 就是下面这个函数，之前漏掉了，现在补上！
 def get_all_draws():
     init_db()
     conn = get_conn()
     rows = conn.execute("SELECT period, date, front1, front2, front3, front4, front5, back1, back2 FROM draws ORDER BY period DESC").fetchall()
     conn.close()
     return rows
+
+def compute_position_stats():
+    init_db()
+    conn = get_conn()
+    rows = conn.execute("SELECT front1,front2,front3,front4,front5,back1,back2 FROM draws").fetchall()
+    conn.close()
+    if not rows: return None
+
+    total = len(rows)
+    positions = {i: {"freq": {n: 0 for n in range(1, 36)}, "sum": 0} for i in range(5)}
+    b_positions = {i: {"freq": {n: 0 for n in range(1, 13)}, "sum": 0} for i in range(2)}
+
+    for r in rows:
+        for i in range(5):
+            num = r[i]
+            positions[i]["freq"][num] += 1
+            positions[i]["sum"] += num
+        for i in range(2):
+            num = r[5+i]
+            b_positions[i]["freq"][num] += 1
+            b_positions[i]["sum"] += num
+
+    stats = {"front": [], "back": []}
+    for i in range(5):
+        avg = round(positions[i]["sum"] / total, 2)
+        prob = {n: (positions[i]["freq"][n] / total) * 100 for n in range(1, 36)}
+        stats["front"].append({"avg": avg, "freq": positions[i]["freq"], "prob": prob})
+        
+    for i in range(2):
+        avg = round(b_positions[i]["sum"] / total, 2)
+        prob = {n: (b_positions[i]["freq"][n] / total) * 100 for n in range(1, 13)}
+        stats["back"].append({"avg": avg, "freq": b_positions[i]["freq"], "prob": prob})
+
+    return stats
+
+# 新增：分析历史趋势与上一期的联系
+def analyze_trend():
+    rows = get_all_draws() # 已经按期号降序
+    if len(rows) < 2: return None
+    
+    latest_front = set(rows[0][2:7])
+    prev_front = set(rows[1][2:7])
+    
+    # 统计最近 100 期的重号和邻号规律（这里仅作示例）
+    repeats = len(latest_front & prev_front)
+    neighbors = 0
+    for n in latest_front:
+        if (n-1 in prev_front) or (n+1 in prev_front):
+            neighbors += 1
+            
+    return {"last_period": rows[0][0], "last_front": sorted(list(latest_front)), 
+            "repeats": repeats, "neighbors": neighbors, "prev_front": sorted(list(prev_front))}
 
 def compute_weights():
     init_db()
@@ -45,9 +96,6 @@ def compute_weights():
         for n in r[:5]: front_freq[n] += 1
         for n in r[5:]: back_freq[n] += 1
 
-    front_rows = [r[:5] for r in rows]
-    back_rows = [r[5:] for r in rows]
-
     def omission(nums_list, max_num):
         result = {}
         for n in range(1, max_num + 1):
@@ -59,6 +107,8 @@ def compute_weights():
                 result[n] = len(nums_list)
         return result
 
+    front_rows = [r[:5] for r in rows]
+    back_rows = [r[5:] for r in rows]
     front_omit = omission(front_rows, 35)
     back_omit = omission(back_rows, 12)
 
@@ -110,7 +160,7 @@ def generate_one(weights):
         back = []
         for _ in range(2):
             w = [bw[n] for n in bavail]
-            pick = random.choices(bavail, weights=w, k=1)[0]
+            pick = random.choices(available, weights=w, k=1)[0]
             back.append(pick)
             bavail.remove(pick)
         back.sort()

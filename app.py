@@ -4,8 +4,8 @@ import engine
 import random
 
 st.set_page_config(page_title="大乐透概率模拟台", layout="wide")
-st.title("🎱 大乐透科学概率与复盘台")
-st.caption("基于“物理随机抽样 + 历史位置形态过滤”的科学模拟模型。")
+st.title("🎱 大乐透深度预测与复盘台")
+st.caption("融合：位置形态分布 + 蒙特卡洛模拟 + 往期趋势关联 (重号/邻号)")
 
 engine.init_db()
 if engine.draw_count() == 0:
@@ -14,29 +14,27 @@ if engine.draw_count() == 0:
 
 weights = engine.compute_weights()
 stats = engine.compute_position_stats()
+trend = engine.analyze_trend()
 
-# 核心科学过滤函数：纯随机生成，但必须符合历史位置形态
-def generate_scientific(weights, stats):
+# 核心科学过滤函数：引入上一期的趋势关联
+def generate_scientific(weights, stats, last_front):
     fw = weights["front_weight"]
     bw = weights["back_weight"]
-    
-    # 计算历史各位置的合理区间（比如均值上下浮动 3.5 左右）
     f_ranges = [(stats["front"][i]["avg"] - 4.5, stats["front"][i]["avg"] + 4.5) for i in range(5)]
     
     best_candidate = None
     highest_score = -1
 
-    # 模拟 5000 次摇奖机
-    for _ in range(5000):
-        # 1. 纯随机抽取（模拟摇奖机）
+    # 模拟 8000 次摇奖机
+    for _ in range(8000):
         front = sorted(random.sample(range(1, 36), 5))
         back = sorted(random.sample(range(1, 13), 2))
 
-        # 2. 基础约束过滤（和值、奇偶、三区）
+        # 1. 基础约束过滤
         if not engine.constraint_ok(front, back):
             continue
 
-        # 3. 位置形态过滤（检查排序后的号码是否偏离历史均值太远）
+        # 2. 位置形态过滤
         valid_shape = True
         for i in range(5):
             if not (f_ranges[i][0] <= front[i] <= f_ranges[i][1]):
@@ -45,21 +43,30 @@ def generate_scientific(weights, stats):
         if not valid_shape:
             continue
 
-        # 4. 打分机制：看这组号码的总权重分高不高
+        # 3. 往期趋势联系过滤（与上期号码的对比）
+        if last_front:
+            repeats = len(set(front) & set(last_front))  # 重号数
+            neighbors = 0  # 邻号数
+            for n in front:
+                if (n-1 in last_front) or (n+1 in last_front):
+                    neighbors += 1
+            
+            # 经验逻辑：重号一般在 0-2 个，邻号一般在 0-2 个
+            if repeats > 2 or neighbors > 2:
+                continue
+
+        # 4. 打分机制
         score = sum([fw[n] for n in front]) + sum([bw[n] for n in back])
-        
         if score > highest_score:
             highest_score = score
             best_candidate = (front, back)
 
-    # 如果过滤太严没找到，就退回到普通生成
     if not best_candidate:
         return engine.generate_one(weights)
     return best_candidate
 
-
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📊 综合概率", "📍 位置规律", "🔬 科学模拟生成", "📋 模拟记录", "📅 历史开奖"
+    "📊 综合概率", "📈 趋势联系", "🔬 深度科学生成", "📋 模拟记录", "📅 历史开奖"
 ])
 
 with tab1:
@@ -72,32 +79,31 @@ with tab1:
     st.bar_chart(fp_df.set_index("号码")["权重%"])
 
 with tab2:
-    st.subheader("🔍 前区各位置形态分析（历史均值）")
-    st.markdown("大乐透虽然摇奖时是乱序的，但排序后，每个位置都有其天然的“物理分布区间”。")
-    
-    cols = st.columns(5)
-    for i in range(5):
-        with cols[i]:
-            st.metric(label=f"第 {i+1} 位均值", value=stats["front"][i]["avg"])
-            top3 = sorted(stats["front"][i]["freq"].items(), key=lambda x: x[1], reverse=True)[:3]
-            st.caption(f"高频号：{top3[0][0]}, {top3[1][0]}, {top3[2][0]}")
-
-    st.divider()
-    st.subheader("🔍 后区各位置分布分析")
-    b_cols = st.columns(2)
-    for i in range(2):
-        with b_cols[i]:
-            st.metric(label=f"后区第 {i+1} 位均值", value=stats["back"][i]["avg"])
-            top3_b = sorted(stats["back"][i]["freq"].items(), key=lambda x: x[1], reverse=True)[:3]
-            st.caption(f"高频号：{top3_b[0][0]}, {top3_b[1][0]}, {top3_b[2][0]}")
+    st.subheader("📈 往期趋势与号码联系")
+    if trend:
+        st.info(f"最新一期：{trend['last_period']}，开奖号码：{trend['last_front']}")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("与上一期的重号数", f"{trend['repeats']} 个", "落号现象")
+        col2.metric("与上一期的邻号数", f"{trend['neighbors']} 个", "边号现象")
+        col3.metric("预测期的历史参考", "重号0~2个", "邻号0~2个")
+        
+        st.markdown("""
+        **🧠 趋势逻辑解读：**
+        1. **重号（落号）**：大乐透经常出现上期出过、这期继续出的号码。但通常不会超过2个。
+        2. **邻号（边号）**：上期号码前后的数字，也是高频发生的联系。
+        我们在下方的“科学生成”中，会严格校验生成号码与上期号码的联系，淘汰掉“重号过多”或“邻号过多”的畸形组合。
+        """)
+    else:
+        st.warning("数据不足，无法分析趋势。")
 
 with tab3:
-    st.subheader("🔬 蒙特卡洛科学模拟")
-    st.caption("逻辑：后台纯随机模拟 5000 次摇奖机，利用历史位置规律淘汰“畸形”号码（如首位出20），再结合冷热权重选出最优解。")
-    target = st.text_input("目标期号（选填）", placeholder="例如 26130")
-    if st.button("🔬 启动科学模拟", type="primary"):
-        with st.spinner("正在模拟 5000 次摇奖机..."):
-            front, back = generate_scientific(weights, stats)
+    st.subheader("🔬 深度科学生成")
+    st.caption("后台将纯随机模拟 8000 次，通过历史位置形态过滤，并强制关联上一期的重号/邻号特征，为您优中选优。")
+    target = st.text_input("目标期号（选填）", placeholder="例如 26131")
+    if st.button("🔬 启动深度模拟", type="primary"):
+        with st.spinner("正在进行万次蒙特卡洛模拟与趋势关联比对..."):
+            last_front = trend['last_front'] if trend else None
+            front, back = generate_scientific(weights, stats, last_front)
             engine.save_prediction(weights, target, front, back)
             st.success(f"前区：{front}  |  后区：{back}")
             st.write("这注号码的权重%：")

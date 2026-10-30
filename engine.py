@@ -1,7 +1,9 @@
 import sqlite3
 import random
 import json
+import math
 from datetime import datetime
+from collections import Counter
 
 DB = "dlt.db"
 FRONT_POOL = list(range(1, 36))
@@ -31,145 +33,126 @@ def get_all_draws():
     conn.close()
     return rows
 
-# 核心升级：计算每个位置的独立权重和统计信息
-def compute_position_stats():
-    init_db()
-    conn = get_conn()
-    rows = conn.execute("SELECT front1,front2,front3,front4,front5,back1,back2 FROM draws").fetchall()
-    conn.close()
-    if not rows: return None
+# 超几何分布组合数计算
+def comb(n, m):
+    if m == 0 or m == n: return 1
+    return math.factorial(n) // (math.factorial(m) * math.factorial(n - m))
 
+# 全量高级数学模型
+def get_advanced_weights():
+    rows = get_all_draws()
+    if len(rows) < 10: return None
+    
     total = len(rows)
-    positions = {i: {"freq": {n: 0 for n in range(1, 36)}, "sum": 0} for i in range(5)}
-    b_positions = {i: {"freq": {n: 0 for n in range(1, 13)}, "sum": 0} for i in range(2)}
-
+    
+    f_freq = Counter()
+    b_freq = Counter()
     for r in rows:
-        for i in range(5):
-            num = r[i]
-            positions[i]["freq"][num] += 1
-            positions[i]["sum"] += num
-        for i in range(2):
-            num = r[5+i]
-            b_positions[i]["freq"][num] += 1
-            b_positions[i]["sum"] += num
+        f_freq.update(r[2:7])
+        b_freq.update(r[7:9])
 
-    stats = {"front": [], "back": []}
-    for i in range(5):
-        avg = round(positions[i]["sum"] / total, 2)
-        prob = {n: (positions[i]["freq"][n] / total) * 100 for n in range(1, 36)}
-        stats["front"].append({"avg": avg, "freq": positions[i]["freq"], "prob": prob})
+    f_omit = {n: total for n in range(1, 36)}
+    b_omit = {n: total for n in range(1, 13)}
+    for idx, r in enumerate(rows):
+        for n in r[2:7]:
+            if f_omit[n] == total: f_omit[n] = idx
+        for n in r[7:9]:
+            if b_omit[n] == total: b_omit[n] = idx
+
+    f_trans = {n: 0 for n in range(1, 36)}
+    for i in range(min(50, total - 1)):
+        prev_nums = set(rows[i+1][2:7])
+        curr_nums = set(rows[i][2:7])
+        for n in curr_nums:
+            if n in prev_nums: f_trans[n] += 1
+
+    # 贝叶斯后验估计
+    bayes_prob = {}
+    for n in range(1, 36):
+        alpha = 1 + f_freq[n]
+        beta_param = 1 + (total * 5 / 35) - f_freq[n]
+        if beta_param < 1: beta_param = 1
+        bayes_prob[n] = alpha / (alpha + beta_param)
         
-    for i in range(2):
-        avg = round(b_positions[i]["sum"] / total, 2)
-        prob = {n: (b_positions[i]["freq"][n] / total) * 100 for n in range(1, 13)}
-        stats["back"].append({"avg": avg, "freq": b_positions[i]["freq"], "prob": prob})
+    # 后区 Dirichlet 平滑
+    dirichlet_prob = {}
+    total_b_draws = total * 2
+    for n in range(1, 13):
+        dirichlet_prob[n] = (b_freq[n] + 1) / (total_b_draws + 12)
 
-    return stats
-
-# 新增：分析历史趋势与上一期的联系
-def analyze_trend():
-    rows = get_all_draws() # 已经按期号降序
-    if len(rows) < 2: return None
+    # 综合权重融合
+    f_score = {}
+    for n in range(1, 36):
+        omit_score = 1.0 / (f_omit[n] + 1.5)
+        trans_score = f_trans[n] / 50.0
+        f_score[n] = (bayes_prob[n] * 100) * 0.3 + omit_score * 20 + trans_score * 20 + (f_freq[n]/total)*30
+        
+    sum_f = sum(f_score.values())
+    f_prob = {n: round((f_score[n] / sum_f) * 100, 2) for n in range(1, 36)}
     
-    latest_front = set(rows[0][2:7])
-    prev_front = set(rows[1][2:7])
-    
-    repeats = len(latest_front & prev_front)
-    neighbors = 0
-    for n in latest_front:
-        if (n-1 in prev_front) or (n+1 in prev_front):
-            neighbors += 1
-            
-    return {"last_period": rows[0][0], "last_front": sorted(list(latest_front)), 
-            "repeats": repeats, "neighbors": neighbors, "prev_front": sorted(list(prev_front))}
-
-def compute_weights():
-    init_db()
-    conn = get_conn()
-    rows = conn.execute("SELECT front1,front2,front3,front4,front5,back1,back2 FROM draws ORDER BY period DESC").fetchall()
-    conn.close()
-    if not rows: return None
-
-    front_freq = {n: 0 for n in FRONT_POOL}
-    back_freq = {n: 0 for n in BACK_POOL}
-    for r in rows:
-        for n in r[:5]: front_freq[n] += 1
-        for n in r[5:]: back_freq[n] += 1
-
-    def omission(nums_list, max_num):
-        result = {}
-        for n in range(1, max_num + 1):
-            for i, row in enumerate(nums_list):
-                if n in row:
-                    result[n] = i
-                    break
-            else:
-                result[n] = len(nums_list)
-        return result
-
-    front_rows = [r[:5] for r in rows]
-    back_rows = [r[5:] for r in rows]
-    front_omit = omission(front_rows, 35)
-    back_omit = omission(back_rows, 12)
-
-    total_f = sum(front_freq.values()) or 1
-    total_fo = sum(front_omit.values()) or 1
-    front_weight = {n: 0.6 * (front_freq[n] / total_f) + 0.4 * (front_omit[n] / total_fo) for n in FRONT_POOL}
-
-    total_b = sum(back_freq.values()) or 1
-    total_bo = sum(back_omit.values()) or 1
-    back_weight = {n: 0.6 * (back_freq[n] / total_b) + 0.4 * (back_omit[n] / total_bo) for n in BACK_POOL}
-
-    sum_fw = sum(front_weight.values()) or 1
-    sum_bw = sum(back_weight.values()) or 1
+    b_score = {}
+    for n in range(1, 13):
+        b_omit_score = 1.0 / (b_omit[n] + 1.5)
+        b_score[n] = dirichlet_prob[n] * 100 * 0.6 + b_omit_score * 30
+    sum_b = sum(b_score.values())
+    b_prob = {n: round((b_score[n] / sum_b) * 100, 2) for n in range(1, 13)}
 
     return {
-        "front_freq": front_freq, "back_freq": back_freq,
-        "front_omit": front_omit, "back_omit": back_omit,
-        "front_weight": front_weight, "back_weight": back_weight,
-        "front_prob": {n: round(front_weight[n] / sum_fw * 100, 2) for n in FRONT_POOL},
-        "back_prob": {n: round(back_weight[n] / sum_bw * 100, 2) for n in BACK_POOL},
-        "total_draws": len(rows),
+        "front_freq": f_freq, "back_freq": b_freq,
+        "front_omit": f_omit, "back_omit": b_omit,
+        "front_trans": f_trans,
+        "front_prob": f_prob, "back_prob": b_prob,
+        "bayes_prob": bayes_prob, "dirichlet_prob": dirichlet_prob,
+        "total_draws": total
     }
 
-def constraint_ok(front, back):
-    s = sum(front)
-    if s < 75 or s > 110: return False
-    odd = sum(1 for n in front if n % 2 == 1)
-    if odd not in (2, 3): return False
-    z1 = sum(1 for n in front if 1 <= n <= 12)
-    z2 = sum(1 for n in front if 13 <= n <= 24)
-    z3 = 5 - z1 - z2
-    if max(z1, z2, z3) - min(z1, z2, z3) > 2: return False
-    return True
+# 科学模拟生成
+def generate_scientific(weights, last_front):
+    fw = weights["front_prob"]
+    bw = weights["back_prob"]
+    
+    best_candidate = None
+    highest_score = -1
 
-def generate_one(weights):
-    fw = weights["front_weight"]
-    bw = weights["back_weight"]
-    for _ in range(5000):
-        available = FRONT_POOL.copy()
+    for _ in range(8000):
+        available = list(range(1, 36))
         front = []
         for _ in range(5):
-            w = [fw[n] for n in available]
+            w = [fw[n] + 0.01 for n in available]
             pick = random.choices(available, weights=w, k=1)[0]
             front.append(pick)
             available.remove(pick)
         front.sort()
 
-        bavail = BACK_POOL.copy()
+        bavail = list(range(1, 13))
         back = []
         for _ in range(2):
-            w = [bw[n] for n in bavail]
+            w = [bw[n] + 0.01 for n in bavail]
             pick = random.choices(bavail, weights=w, k=1)[0]
             back.append(pick)
             bavail.remove(pick)
         back.sort()
-        if constraint_ok(front, back): return front, back
 
-    while True:
-        front = sorted(random.sample(FRONT_POOL, 5))
-        back = sorted(random.sample(BACK_POOL, 2))
-        if constraint_ok(front, back): return front, back
+        s = sum(front)
+        if s < 75 or s > 110: continue
+        odd = sum(1 for n in front if n % 2 == 1)
+        if odd not in (2, 3): continue
+        
+        if last_front:
+            repeats = len(set(front) & set(last_front))
+            neighbors = 0
+            for n in front:
+                if (n-1 in last_front) or (n+1 in last_front): neighbors += 1
+            if repeats > 2 or neighbors > 2: continue
+
+        score = sum([fw[n] for n in front]) + sum([bw[n] for n in back])
+        if score > highest_score:
+            highest_score = score
+            best_candidate = (front, back)
+
+    if not best_candidate:
+        return sorted(random.sample(range(1, 36), 5)), sorted(random.sample(range(1, 13), 2))
+    return best_candidate
 
 def save_prediction(weights, target_period, front, back):
     init_db()
@@ -179,36 +162,6 @@ def save_prediction(weights, target_period, front, back):
     bp = {str(n): weights["back_prob"][n] for n in back}
     conn.execute("INSERT INTO predictions (target_period, front_numbers, back_numbers, front_probs, back_probs, created_at) VALUES (?,?,?,?,?,?)",
         (target_period, json.dumps(front), json.dumps(back), json.dumps(fp, ensure_ascii=False), json.dumps(bp, ensure_ascii=False), datetime.now().strftime("%Y-%m-%d %H:%M")))
-    conn.commit()
-    conn.close()
-
-def review_all():
-    init_db()
-    conn = get_conn()
-    draws = {r[0]: r for r in conn.execute("SELECT period,front1,front2,front3,front4,front5,back1,back2 FROM draws").fetchall()}
-    pending = conn.execute("SELECT id,target_period,front_numbers,back_numbers FROM predictions WHERE hit_level='待开奖'").fetchall()
-
-    for pid, tp, fj, bj in pending:
-        if tp not in draws: continue
-        actual_front = set(draws[tp][1:6])
-        actual_back = set(draws[tp][6:8])
-        pred_front = set(json.loads(fj))
-        pred_back = set(json.loads(bj))
-        hit_f = len(pred_front & actual_front)
-        hit_b = len(pred_back & actual_back)
-
-        level = "未中"
-        if hit_f == 5 and hit_b == 2: level = "一等奖"
-        elif hit_f == 5 and hit_b == 1: level = "二等奖"
-        elif hit_f == 5 and hit_b == 0: level = "三等奖"
-        elif hit_f == 4 and hit_b == 2: level = "四等奖"
-        elif hit_f == 4 and hit_b == 1: level = "五等奖"
-        elif hit_f == 3 and hit_b == 2: level = "六等奖"
-        elif hit_f == 4 and hit_b == 0: level = "七等奖"
-        elif (hit_f == 3 and hit_b == 1) or (hit_f == 2 and hit_b == 2): level = "八等奖"
-        elif (hit_f == 3 and hit_b == 0) or (hit_f == 1 and hit_b == 2) or (hit_f == 2 and hit_b == 1) or (hit_f == 0 and hit_b == 2): level = "九等奖"
-
-        conn.execute("UPDATE predictions SET hit_level=?, hit_front=?, hit_back=? WHERE id=?", (level, hit_f, hit_b, pid))
     conn.commit()
     conn.close()
 

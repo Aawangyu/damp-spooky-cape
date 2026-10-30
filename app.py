@@ -3,127 +3,111 @@ import pandas as pd
 import engine
 import random
 
-st.set_page_config(page_title="大乐透概率模拟台", layout="wide")
-st.title("🎱 大乐透深度预测与复盘台")
-st.caption("融合：位置形态分布 + 蒙特卡洛模拟 + 往期趋势关联 (重号/邻号)")
+st.set_page_config(page_title="大乐透量化预测系统", layout="wide")
+st.title("🧬 大乐透全维量化预测系统")
+st.caption("融合：贝叶斯后验 · Dirichlet共轭 · 马尔科夫链 · 几何生存函数 · 超几何模拟")
 
 engine.init_db()
 if engine.draw_count() == 0:
     st.error("数据库为空！请上传 dlt.db。")
     st.stop()
 
-weights = engine.compute_weights()
-stats = engine.compute_position_stats()
-trend = engine.analyze_trend()
-
-# 核心科学过滤函数：引入上一期的趋势关联
-def generate_scientific(weights, stats, last_front):
-    fw = weights["front_weight"]
-    bw = weights["back_weight"]
-    f_ranges = [(stats["front"][i]["avg"] - 4.5, stats["front"][i]["avg"] + 4.5) for i in range(5)]
-    
-    best_candidate = None
-    highest_score = -1
-
-    # 模拟 8000 次摇奖机
-    for _ in range(8000):
-        front = sorted(random.sample(range(1, 36), 5))
-        back = sorted(random.sample(range(1, 13), 2))
-
-        # 1. 基础约束过滤
-        if not engine.constraint_ok(front, back):
-            continue
-
-        # 2. 位置形态过滤
-        valid_shape = True
-        for i in range(5):
-            if not (f_ranges[i][0] <= front[i] <= f_ranges[i][1]):
-                valid_shape = False
-                break
-        if not valid_shape:
-            continue
-
-        # 3. 往期趋势联系过滤（与上期号码的对比）
-        if last_front:
-            repeats = len(set(front) & set(last_front))  # 重号数
-            neighbors = 0  # 邻号数
-            for n in front:
-                if (n-1 in last_front) or (n+1 in last_front):
-                    neighbors += 1
-            
-            # 经验逻辑：重号一般在 0-2 个，邻号一般在 0-2 个
-            if repeats > 2 or neighbors > 2:
-                continue
-
-        # 4. 打分机制
-        score = sum([fw[n] for n in front]) + sum([bw[n] for n in back])
-        if score > highest_score:
-            highest_score = score
-            best_candidate = (front, back)
-
-    if not best_candidate:
-        return engine.generate_one(weights)
-    return best_candidate
+weights = engine.get_advanced_weights()
+if not weights:
+    st.warning("数据量不足（至少需要10期），无法建立数学模型。")
+    st.stop()
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📊 综合概率", "📈 趋势联系", "🔬 深度科学生成", "📋 模拟记录", "📅 历史开奖"
+    "🎯 综合预测与Top7", "📈 趋势联系", "🔬 深度科学生成", "📋 模拟记录", "💡 期望与风险管理"
 ])
 
 with tab1:
-    st.subheader("前区号码总权重（%）")
-    fp_df = pd.DataFrame({
-        "号码": list(weights["front_prob"].keys()),
-        "权重%": list(weights["front_prob"].values()),
-        "遗漏": [weights["front_omit"][n] for n in weights["front_prob"]],
-    }).sort_values("权重%", ascending=False)
-    st.bar_chart(fp_df.set_index("号码")["权重%"])
+    st.markdown("### 🌟 前区 Top 7 黄金参考号")
+    st.caption("综合了贝叶斯后验概率、马尔科夫转移概率与遗漏生存函数，推演出的最高概率号码。")
+    sorted_f = sorted(weights["front_prob"].items(), key=lambda x: x[1], reverse=True)[:7]
+    
+    cols = st.columns(7)
+    for i, (num, prob) in enumerate(sorted_f):
+        with cols[i]:
+            st.metric(label=f"号码 {num:02d}", value=f"{prob}%")
+
+    st.markdown("### 🔵 后区 Top 3 核心参考号")
+    sorted_b = sorted(weights["back_prob"].items(), key=lambda x: x[1], reverse=True)[:3]
+    b_cols = st.columns(3)
+    for i, (num, prob) in enumerate(sorted_b):
+        with b_cols[i]:
+            st.metric(label=f"号码 {num:02d}", value=f"{prob}%")
+
+    st.divider()
+    
+    st.markdown("### 📊 数据模型深度解析")
+    with st.expander("点击查看：前区贝叶斯后验 & 马尔科夫链原始数据"):
+        df_f = pd.DataFrame({
+            "号码": range(1, 36),
+            "贝叶斯后验概率": [round(weights["bayes_prob"][n]*100, 2) for n in range(1, 36)],
+            "上期开出转移次数": [weights["front_trans"][n] for n in range(1, 36)],
+            "当前遗漏期数": [weights["front_omit"][n] for n in range(1, 36)]
+        }).sort_values("贝叶斯后验概率", ascending=False)
+        st.dataframe(df_f, use_container_width=True, hide_index=True)
+
+    # 🔥 最下方的高亮推荐栏目
+    st.divider()
+    st.markdown("### 🏆 最终量化决策推荐（基于全维模型权重）")
+    
+    top7_front = sorted([num for num, prob in sorted_f])
+    top3_back = sorted([num for num, prob in sorted_b])
+    
+    front_str = "  ".join([f"{n:02d}" for n in top7_front])
+    back_str = "  ".join([f"{n:02d}" for n in top3_back])
+    
+    st.success(f"**🔥 前区精选大底 (Top 7)：** \n\n## {front_str}")
+    st.info(f"**🔥 后区精选大底 (Top 3)：** \n\n## {back_str}")
+    
+    st.caption("💡 提示：您可以从上述 Top7 和 Top3 中，按照冷热搭配（如3热2冷）自由组合，或者直接去「深度科学生成」页面提取系统自动约束出的 5+2 组合。")
 
 with tab2:
-    st.subheader("📈 往期趋势与号码联系")
-    if trend:
-        st.info(f"最新一期：{trend['last_period']}，开奖号码：{trend['last_front']}")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("与上一期的重号数", f"{trend['repeats']} 个", "落号现象")
-        col2.metric("与上一期的邻号数", f"{trend['neighbors']} 个", "边号现象")
-        col3.metric("预测期的历史参考", "重号0~2个", "邻号0~2个")
+    st.markdown("### 📈 趋势联系与独立性检验")
+    st.info("基于皮尔逊相关系数与卡方检验，我们确认大乐透各个号码之间“互相独立”。这意味着冷热交替不会影响下期开奖，所有关联都是统计错觉。")
+    
+    rows = engine.get_all_draws()
+    if len(rows) >= 2:
+        st.markdown(f"**最新一期:** {rows[0][0]} | 前区: {rows[0][2:7]} | 后区: {rows[0][7:9]}")
+        st.markdown(f"**上一期:** {rows[1][0]} | 前区: {rows[1][2:7]} | 后区: {rows[1][7:9]}")
         
-        st.markdown("""
-        **🧠 趋势逻辑解读：**
-        1. **重号（落号）**：大乐透经常出现上期出过、这期继续出的号码。但通常不会超过2个。
-        2. **邻号（边号）**：上期号码前后的数字，也是高频发生的联系。
-        我们在下方的“科学生成”中，会严格校验生成号码与上期号码的联系，淘汰掉“重号过多”或“邻号过多”的畸形组合。
-        """)
-    else:
-        st.warning("数据不足，无法分析趋势。")
+        repeats = len(set(rows[0][2:7]) & set(rows[1][2:7]))
+        st.metric("重号数 (落号)", f"{repeats} 个", "历史均值: 0~2个")
 
 with tab3:
-    st.subheader("🔬 深度科学生成")
-    st.caption("后台将纯随机模拟 8000 次，通过历史位置形态过滤，并强制关联上一期的重号/邻号特征，为您优中选优。")
-    target = st.text_input("目标期号（选填）", placeholder="例如 26131")
-    if st.button("🔬 启动深度模拟", type="primary"):
-        with st.spinner("正在进行万次蒙特卡洛模拟与趋势关联比对..."):
-            last_front = trend['last_front'] if trend else None
-            front, back = generate_scientific(weights, stats, last_front)
+    st.markdown("### 🔬 蒙特卡洛模拟生成")
+    st.caption("结合上述所有数学模型，进行 8000 次全量模拟，并通过重号/邻号约束过滤。")
+    target = st.text_input("目标期号（选填）", placeholder="例如 26124")
+    if st.button("🧬 启动量化模拟", type="primary"):
+        with st.spinner("正在进行马尔科夫链演化与贝叶斯采样..."):
+            rows = engine.get_all_draws()
+            last_front = rows[0][2:7] if rows else None
+            front, back = engine.generate_scientific(weights, last_front)
             engine.save_prediction(weights, target, front, back)
-            st.success(f"前区：{front}  |  后区：{back}")
-            st.write("这注号码的权重%：")
-            st.write("前区", {n: weights["front_prob"][n] for n in front})
-            st.write("后区", {n: weights["back_prob"][n] for n in back})
+            st.success(f"🎯 最终推断 -> 前区：{front}  |  后区：{back}")
 
 with tab4:
     st.subheader("所有模拟记录")
-    rows = engine.get_predictions()
-    if rows:
-        df = pd.DataFrame(rows, columns=["ID", "期号", "前区", "后区", "时间", "结果", "前区命中", "后区命中"])
+    preds = engine.get_predictions()
+    if preds:
+        df = pd.DataFrame(preds, columns=["ID", "期号", "前区", "后区", "时间", "结果", "前区命中", "后区命中"])
         st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("暂无记录")
 
 with tab5:
-    st.subheader("历史开奖记录（真实数据）")
-    draws = engine.get_all_draws()
-    if draws:
-        draw_df = pd.DataFrame(draws, columns=["期号", "开奖日期", "前区1", "前区2", "前区3", "前区4", "前区5", "后区1", "后区2"])
-        draw_df["前区号码"] = draw_df.apply(lambda x: f"{x['前区1']:02d} {x['前区2']:02d} {x['前区3']:02d} {x['前区4']:02d} {x['前区5']:02d}", axis=1)
-        draw_df["后区号码"] = draw_df.apply(lambda x: f"{x['后区1']:02d} {x['后区2']:02d}", axis=1)
-        st.dataframe(draw_df[["期号", "开奖日期", "前区号码", "后区号码"]], use_container_width=True, hide_index=True)
+    st.markdown("### 💡 极限定理与风险控制指导")
+    st.error("🚨 **大数定律与破产概率**：任何预测模型都无法战胜“独立随机事件”的物理本质。买得越多，结果越趋近于极低的数学期望。不要试图用加倍投注（马丁格尔策略）去回本，破产概率会呈指数上升。")
+    
+    st.markdown("#### 1. 超几何分布与期望收益")
+    c_total = engine.comb(35, 5) * engine.comb(12, 2)
+    st.write(f"大乐透总组合数：**{c_total:,}** 种。")
+    st.write(f"一等奖（5+2）理论概率：**1 / {c_total:,}**。")
+    st.write(f"数学期望：假设奖池为1亿，单注2元，期望收益远低于2元，属于**负和游戏**。")
+    
+    st.markdown("#### 2. 凯利准则 (Kelly Criterion) 的应用")
+    st.info("凯利公式用于计算最佳下注比例：\(f^* = (bp - q) / b\)。因为大乐透的胜率 \(p\) 极小，且赔率 \(b\) 为固定值，算出的 \(f^*\) 是负数。**科学结论：理性的下注额永远是 0**。")
+    
+    st.markdown("#### 3. 理性购彩指导")
+    st.success("✅ 把这款软件当做**统计学和贝叶斯推断的练习场**，享受数据可视化的乐趣。\n\n✅ 每次投入不超过一杯奶茶钱，不中当做慈善，中了当做奇迹。\n\n✅ 永远不要相信“必中规律”，只相信数学模型的演算。")

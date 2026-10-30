@@ -31,6 +31,7 @@ def get_all_draws():
     conn.close()
     return rows
 
+# 核心升级：计算每个位置的独立权重和统计信息
 def compute_position_stats():
     init_db()
     conn = get_conn()
@@ -73,7 +74,6 @@ def analyze_trend():
     latest_front = set(rows[0][2:7])
     prev_front = set(rows[1][2:7])
     
-    # 统计最近 100 期的重号和邻号规律（这里仅作示例）
     repeats = len(latest_front & prev_front)
     neighbors = 0
     for n in latest_front:
@@ -160,7 +160,7 @@ def generate_one(weights):
         back = []
         for _ in range(2):
             w = [bw[n] for n in bavail]
-            pick = random.choices(available, weights=w, k=1)[0]
+            pick = random.choices(bavail, weights=w, k=1)[0]
             back.append(pick)
             bavail.remove(pick)
         back.sort()

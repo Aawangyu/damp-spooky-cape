@@ -23,16 +23,16 @@ def init_db():
     conn.commit()
     conn.close()
 
-# 🔥 新增：从官方接口实时抓取最新开奖
 def fetch_latest_draw():
     init_db()
     base = "https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=30&isVerify=1&pageNo=1"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     try:
         resp = requests.get(base, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return False, "体彩官网防火墙拒绝了 Streamlit 云端 IP，请在本地更新。"
         data = resp.json()
         items = data["value"]["list"]
-        
         conn = get_conn()
         new_count = 0
         for item in items:
@@ -46,8 +46,8 @@ def fetch_latest_draw():
         conn.close()
         return True, f"成功同步！新增 {new_count} 期最新数据。"
     except Exception as e:
-        return False, f"同步失败：{str(e)}"
-
+        return False, "云端 IP 被官网拦截，请使用本地数据更新。"
+        
 def draw_count():
     init_db()
     conn = get_conn()
@@ -69,26 +69,20 @@ def get_latest_three_draws():
 def get_advanced_weights():
     rows = get_all_draws()
     if len(rows) < 10: return None
-    
     f_scores = {n: 0.0 for n in range(1, 36)}
     b_scores = {n: 0.0 for n in range(1, 13)}
-    
     for idx, r in enumerate(rows):
         decay = 1.0 / (1.0 + 0.05 * idx)
         for n in r[2:7]: f_scores[n] += 1.0 * decay
         for n in r[7:9]: b_scores[n] += 1.0 * decay
-
     sum_f = sum(f_scores.values())
     f_prob = {n: round((f_scores[n] / sum_f) * 100, 2) for n in range(1, 36)}
-    
     sum_b = sum(b_scores.values())
     b_prob = {n: round((b_scores[n] / sum_b) * 100, 2) for n in range(1, 13)}
-
     f_pos_avgs = [0.0]*5
     for r in rows:
         for i in range(5): f_pos_avgs[i] += r[2+i]
     f_pos_avgs = [round(x/len(rows), 1) for x in f_pos_avgs]
-
     return {
         "front_prob": f_prob, "back_prob": b_prob,
         "f_pos_avgs": f_pos_avgs,
@@ -99,7 +93,6 @@ def generate_numbers(weights, last_front, last_back, count=1):
     fw = weights["front_prob"]
     bw = weights["back_prob"]
     results = []
-    
     for _ in range(count):
         while True:
             available = list(range(1, 36))
@@ -110,9 +103,7 @@ def generate_numbers(weights, last_front, last_back, count=1):
                 front.append(pick)
                 available.remove(pick)
             front.sort()
-            
             if front[-1] - front[0] < 15: continue
-                
             consecutive = 1
             max_consecutive = 1
             for i in range(1, 5):
@@ -123,7 +114,6 @@ def generate_numbers(weights, last_front, last_back, count=1):
                     consecutive = 1
             if max_consecutive >= 4: continue
             break
-
         bavail = list(range(1, 13))
         back = []
         for _ in range(2):
@@ -132,23 +122,19 @@ def generate_numbers(weights, last_front, last_back, count=1):
             back.append(pick)
             bavail.remove(pick)
         back.sort()
-        
         reasons = []
         f_sum = sum(front)
         f_odd = sum(1 for n in front if n % 2 == 1)
         reasons.append(f"**【宏观形态】** 本期前区和值为 {f_sum}，奇偶比 {f_odd}:{5-f_odd}，符合高频期望。")
-        
         for i in range(5):
             pos_name = ["第一", "第二", "第三", "第四", "第五"][i]
             val = front[i]
             avg = weights["f_pos_avgs"][i]
-            
             if last_front:
                 diff = val - last_front[i]
                 reasons.append(f"**【{pos_name}位推演】** 历史该位均值为 {avg}。上期该位开出 {last_front[i]:02d}，本期通过遗漏补偿与引力偏移计算，产生 {diff:+d} 的浮动，最终锁定 **{val:02d}**。")
             else:
                 reasons.append(f"**【{pos_name}位推演】** 基于历史均值 {avg} 及近三十期概率权重，锁定 **{val:02d}**。")
-            
         results.append({"front": front, "back": back, "reason": reasons})
     return results
 
@@ -178,13 +164,11 @@ def analyze_gap(pred_f, pred_b, act_f, act_b):
     p_sum, a_sum = sum(pred_f), sum(act_f)
     p_odd = sum(1 for n in pred_f if n%2==1)
     a_odd = sum(1 for n in act_f if n%2==1)
-    
     gap_str = f"**总和值差异**：预测 {p_sum}，实际 {a_sum}，偏差 {abs(p_sum-a_sum)}。\n\n"
     gap_str += f"**奇偶比差异**：预测 {p_odd}:{5-p_odd}，实际 {a_odd}:{5-a_odd}。\n\n"
     gap_str += "**逐位偏离分析**：\n"
     for i in range(5):
         gap_str += f"- 第 {i+1} 位：预测 {pred_f[i]:02d}，实际 {act_f[i]:02d}，偏离 {act_f[i]-pred_f[i]:+d}\n"
-    
     if abs(p_sum - a_sum) > 20:
         gap_str += "\n**结论**：本期和值发生极端偏移，说明公式对冷门爆发区域的覆盖不足。"
     else:

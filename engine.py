@@ -15,8 +15,6 @@ def get_conn():
 def init_db():
     conn = get_conn()
     conn.execute("CREATE TABLE IF NOT EXISTS draws (period TEXT PRIMARY KEY, date TEXT, front1 INTEGER, front2 INTEGER, front3 INTEGER, front4 INTEGER, front5 INTEGER, back1 INTEGER, back2 INTEGER)")
-    
-    # 加入 user_id 字段实现多用户隔离
     conn.execute("""CREATE TABLE IF NOT EXISTS predictions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, target_period TEXT, 
         front_numbers TEXT, back_numbers TEXT, front_probs TEXT, back_probs TEXT, 
@@ -28,13 +26,15 @@ def init_db():
         pred_odd INTEGER, actual_odd INTEGER, odd_delta INTEGER,
         reason TEXT, created_at TEXT
     )""")
-    
-    # 兼容处理：如果旧表没有 user_id，自动加上
+    # 极限回测记录表
+    conn.execute("""CREATE TABLE IF NOT EXISTS backtest_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, period TEXT, 
+        simulations INTEGER, deep_analysis TEXT, created_at TEXT
+    )""")
     try: conn.execute("ALTER TABLE predictions ADD COLUMN user_id TEXT DEFAULT 'default'")
     except: pass
     try: conn.execute("ALTER TABLE lessons ADD COLUMN user_id TEXT DEFAULT 'default'")
     except: pass
-    
     conn.commit()
     conn.close()
 
@@ -57,33 +57,22 @@ def comb(n, m):
     if m == 0 or m == n: return 1
     return math.factorial(n) // (math.factorial(m) * math.factorial(n - m))
 
-# 🔥 读取当前用户的历史经验
 def get_global_correction(user_id):
     init_db()
     conn = get_conn()
     rows = conn.execute("SELECT sum_delta, odd_delta FROM lessons WHERE user_id = ?", (user_id,)).fetchall()
     conn.close()
-    
-    if not rows: 
-        return {"avg_sum_delta": 0, "avg_odd_delta": 0, "total_lessons": 0}
-    
+    if not rows: return {"avg_sum_delta": 0, "avg_odd_delta": 0, "total_lessons": 0}
     total_sum_delta = sum(r[0] for r in rows)
     total_odd_delta = sum(r[1] for r in rows)
     n = len(rows)
-    
-    return {
-        "avg_sum_delta": round(total_sum_delta / n, 2),
-        "avg_odd_delta": round(total_odd_delta / n, 2),
-        "total_lessons": n
-    }
+    return {"avg_sum_delta": round(total_sum_delta / n, 2), "avg_odd_delta": round(total_odd_delta / n, 2), "total_lessons": n}
 
 def get_advanced_weights():
     rows = get_all_draws()
     if len(rows) < 10: return None
     total = len(rows)
-    
-    f_freq = Counter()
-    b_freq = Counter()
+    f_freq, b_freq = Counter(), Counter()
     for r in rows:
         f_freq.update(r[2:7])
         b_freq.update(r[7:9])
@@ -103,17 +92,8 @@ def get_advanced_weights():
         for n in curr_nums:
             if n in prev_nums: f_trans[n] += 1
 
-    bayes_prob = {}
-    for n in range(1, 36):
-        alpha = 1 + f_freq[n]
-        beta_param = 1 + (total * 5 / 35) - f_freq[n]
-        if beta_param < 1: beta_param = 1
-        bayes_prob[n] = alpha / (alpha + beta_param)
-        
-    dirichlet_prob = {}
-    total_b_draws = total * 2
-    for n in range(1, 13):
-        dirichlet_prob[n] = (b_freq[n] + 1) / (total_b_draws + 12)
+    bayes_prob = {n: (1 + f_freq[n]) / ((1 + f_freq[n]) + max(1, 1 + (total * 5 / 35) - f_freq[n])) for n in range(1, 36)}
+    dirichlet_prob = {n: (b_freq[n] + 1) / (total * 2 + 12) for n in range(1, 13)}
 
     f_score = {}
     for n in range(1, 36):
@@ -131,25 +111,75 @@ def get_advanced_weights():
     sum_b = sum(b_score.values())
     b_prob = {n: round((b_score[n] / sum_b) * 100, 2) for n in range(1, 13)}
 
+    sorted_nums = sorted(f_prob.items(), key=lambda x: x[1], reverse=True)
     return {
-        "front_freq": f_freq, "back_freq": b_freq,
-        "front_omit": f_omit, "back_omit": b_omit,
-        "front_trans": f_trans,
-        "front_prob": f_prob, "back_prob": b_prob,
-        "bayes_prob": bayes_prob, "dirichlet_prob": dirichlet_prob,
-        "total_draws": total
+        "front_freq": f_freq, "back_freq": b_freq, "front_omit": f_omit, "back_omit": b_omit,
+        "front_trans": f_trans, "front_prob": f_prob, "back_prob": b_prob,
+        "bayes_prob": bayes_prob, "dirichlet_prob": dirichlet_prob, "total_draws": total,
+        "hot_nums": [n for n, p in sorted_nums[:10]],
+        "warm_nums": [n for n, p in sorted_nums[10:25]],
+        "cold_nums": [n for n, p in sorted_nums[25:]]
     }
 
-# 🔥 传入 user_id，只调取该用户的经验
-def generate_scientific(weights, last_front, user_id):
-    fw = weights["front_prob"]
-    bw = weights["back_prob"]
+def generate_scientific(weights, last_front, last_back, user_id):
+    fw, bw = weights["front_prob"], weights["back_prob"]
     correction = get_global_correction(user_id) 
-    
-    best_candidate = None
-    highest_score = -1
+    candidates = []
 
     for _ in range(8000):
+        available = list(range(1, 36))
+        front = [random.choices(available, weights=[fw[n] + 0.01 for n in available], k=1)[0] for _ in range(5)]
+        front = list(dict.fromkeys(front))
+        if len(front) < 5: 
+            front = sorted(random.sample(range(1, 36), 5))
+        else:
+            front.sort()
+
+        bavail = list(range(1, 13))
+        back = [random.choices(bavail, weights=[bw[n] + 0.01 for n in bavail], k=1)[0] for _ in range(2)]
+        back = list(dict.fromkeys(back))
+        if len(back) < 2:
+            back = sorted(random.sample(range(1, 13), 2))
+        else:
+            back.sort()
+
+        score = sum([fw[n] for n in front]) + sum([bw[n] for n in back])
+        s = sum(front)
+        if 75 <= s <= 110: score += 10.0
+        odd = sum(1 for n in front if n % 2 == 1)
+        if odd in (2, 3): score += 5.0
+
+        if last_front:
+            repeats = len(set(front) & set(last_front))
+            if repeats in (1, 2): score += 8.0
+            elif repeats > 2: score -= 15.0
+        
+        if abs(s - (90 + correction["avg_sum_delta"])) < 10: score += 3.0
+        candidates.append({"front": front, "back": back, "score": score})
+
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    pool_size = min(30, len(candidates))
+    best_pick = random.choice(candidates[:pool_size])
+    return best_pick["front"], best_pick["back"]
+
+# 🔥 极限回测函数
+def simulate_hit_test(weights, target_period, user_id):
+    conn = get_conn()
+    row = conn.execute("SELECT front1,front2,front3,front4,front5,back1,back2 FROM draws WHERE period = ?", (target_period,)).fetchone()
+    
+    if not row: 
+        conn.close()
+        return None, "未找到该期号数据"
+    
+    target_front = set(row[0:5])
+    target_back = set(row[5:7])
+    fw, bw = weights["front_prob"], weights["back_prob"]
+    
+    count = 0
+    max_simulations = 5000000 
+    
+    while count < max_simulations:
+        count += 1
         available = list(range(1, 36))
         front = []
         for _ in range(5):
@@ -157,8 +187,7 @@ def generate_scientific(weights, last_front, user_id):
             pick = random.choices(available, weights=w, k=1)[0]
             front.append(pick)
             available.remove(pick)
-        front.sort()
-
+        
         bavail = list(range(1, 13))
         back = []
         for _ in range(2):
@@ -166,32 +195,40 @@ def generate_scientific(weights, last_front, user_id):
             pick = random.choices(bavail, weights=w, k=1)[0]
             back.append(pick)
             bavail.remove(pick)
-        back.sort()
-
-        s = sum(front)
-        dynamic_lower = 75 + correction["avg_sum_delta"]
-        dynamic_upper = 110 + correction["avg_sum_delta"]
         
-        if s < dynamic_lower or s > dynamic_upper: continue
-        
-        odd = sum(1 for n in front if n % 2 == 1)
-        if odd not in (2, 3): continue
-        
-        if last_front:
-            repeats = len(set(front) & set(last_front))
-            neighbors = 0
-            for n in front:
-                if (n-1 in last_front) or (n+1 in last_front): neighbors += 1
-            if repeats > 2 or neighbors > 2: continue
+        if set(front) == target_front and set(back) == target_back:
+            f_list = sorted(list(target_front))
+            b_list = sorted(list(target_back))
+            sum_val = sum(f_list)
+            odd_count = sum(1 for n in f_list if n%2==1)
+            
+            hot_hits = len(set(f_list) & set(weights["hot_nums"]))
+            cold_hits = len(set(f_list) & set(weights["cold_nums"]))
+            
+            analysis = f"该期号码和值为 {sum_val}，奇偶比为 {odd_count}:{5-odd_count}。"
+            analysis += f"前区命中了 {hot_hits} 个热号，{5-hot_hits-cold_hits} 个温号，{cold_hits} 个冷号。"
+            
+            if sum_val >= 75 and sum_val <= 110:
+                analysis += " 整体形态属于历史高概率区间。"
+            else:
+                analysis += " 形态属于极端偏态，能开出纯属极小概率的随机爆发。"
+                
+            conn.execute("INSERT INTO backtest_logs (user_id, period, simulations, deep_analysis, created_at) VALUES (?,?,?,?,?)",
+                (user_id, target_period, count, analysis, datetime.now().strftime("%Y-%m-%d %H:%M")))
+            conn.commit()
+            conn.close()
+            return count, analysis
+            
+    conn.close()
+    return max_simulations, "超过 500 万次仍未中，符合极低的中奖率"
 
-        score = sum([fw[n] for n in front]) + sum([bw[n] for n in back])
-        if score > highest_score:
-            highest_score = score
-            best_candidate = (front, back)
-
-    if not best_candidate:
-        return sorted(random.sample(range(1, 36), 5)), sorted(random.sample(range(1, 13), 2))
-    return best_candidate
+# 🔥 获取回测历史
+def get_backtest_logs(user_id):
+    init_db()
+    conn = get_conn()
+    rows = conn.execute("SELECT period, simulations, deep_analysis, created_at FROM backtest_logs WHERE user_id = ? ORDER BY id DESC", (user_id,)).fetchall()
+    conn.close()
+    return rows
 
 def save_prediction(weights, target_period, front, back, user_id):
     init_db()
@@ -204,7 +241,6 @@ def save_prediction(weights, target_period, front, back, user_id):
     conn.commit()
     conn.close()
 
-# 🔥 复盘时，把教训记在对应 user_id 的头上
 def review_all():
     init_db()
     conn = get_conn()
@@ -215,14 +251,10 @@ def review_all():
         if tp not in draws: continue
         actual_front_list = draws[tp][1:6]
         actual_back_list = draws[tp][6:8]
-        
         actual_front = set(actual_front_list)
-        actual_back = set(actual_back_list)
         pred_front = set(json.loads(fj))
-        pred_back = set(json.loads(bj))
-        
         hit_f = len(pred_front & actual_front)
-        hit_b = len(pred_back & actual_back)
+        hit_b = len(set(json.loads(bj)) & set(actual_back_list))
 
         level = "未中"
         if hit_f == 5 and hit_b == 2: level = "一等奖"
@@ -236,23 +268,17 @@ def review_all():
         elif (hit_f == 3 and hit_b == 0) or (hit_f == 1 and hit_b == 2) or (hit_f == 2 and hit_b == 1) or (hit_f == 0 and hit_b == 2): level = "九等奖"
 
         conn.execute("UPDATE predictions SET hit_level=?, hit_front=?, hit_back=? WHERE id=?", (level, hit_f, hit_b, pid))
-        
         if level == "未中":
             pred_f_list = json.loads(fj)
             p_sum, a_sum = sum(pred_f_list), sum(actual_front_list)
             p_odd = sum(1 for n in pred_f_list if n%2==1)
             a_odd = sum(1 for n in actual_front_list if n%2==1)
-            
             reason = []
             if abs(p_sum - a_sum) > 15: reason.append("和值偏差大")
             if p_odd != a_odd: reason.append("奇偶比例不符")
             if not reason: reason.append("独立随机事件")
-            
-            conn.execute("""INSERT INTO lessons 
-                (user_id, period, pred_sum, actual_sum, sum_delta, pred_odd, actual_odd, odd_delta, reason, created_at) 
-                VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            conn.execute("INSERT INTO lessons (user_id, period, pred_sum, actual_sum, sum_delta, pred_odd, actual_odd, odd_delta, reason, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (uid, tp, p_sum, a_sum, a_sum - p_sum, p_odd, a_odd, a_odd - p_odd, "，".join(reason), datetime.now().strftime("%Y-%m-%d %H:%M")))
-            
     conn.commit()
     conn.close()
 

@@ -2,6 +2,7 @@ import sqlite3
 import random
 import json
 import math
+import requests
 from datetime import datetime
 
 DB = "dlt.db"
@@ -21,6 +22,31 @@ def init_db():
         cursor.execute("ALTER TABLE predictions ADD COLUMN user_id TEXT DEFAULT 'default'")
     conn.commit()
     conn.close()
+
+# 🔥 新增：从官方接口实时抓取最新开奖
+def fetch_latest_draw():
+    init_db()
+    base = "https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=30&isVerify=1&pageNo=1"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    try:
+        resp = requests.get(base, headers=headers, timeout=10)
+        data = resp.json()
+        items = data["value"]["list"]
+        
+        conn = get_conn()
+        new_count = 0
+        for item in items:
+            parts = item["lotteryUnsortDrawresult"].replace("+", " ").split()
+            nums = [int(x) for x in parts]
+            cur = conn.execute("INSERT OR IGNORE INTO draws VALUES (?,?,?,?,?,?,?,?,?)",
+                (item["lotteryDrawNum"], item["lotterySaleEndtime"].split(" ")[0],
+                 nums[0], nums[1], nums[2], nums[3], nums[4], nums[5], nums[6]))
+            new_count += cur.rowcount
+        conn.commit()
+        conn.close()
+        return True, f"成功同步！新增 {new_count} 期最新数据。"
+    except Exception as e:
+        return False, f"同步失败：{str(e)}"
 
 def draw_count():
     init_db()
@@ -78,7 +104,6 @@ def generate_numbers(weights, last_front, last_back, count=1):
         while True:
             available = list(range(1, 36))
             front = []
-            # 纯基于历史权重的轮盘赌抽取
             for _ in range(5):
                 w = [fw[n] + 0.01 for n in available]
                 pick = random.choices(available, weights=w, k=1)[0]
@@ -86,11 +111,8 @@ def generate_numbers(weights, last_front, last_back, count=1):
                 available.remove(pick)
             front.sort()
             
-            # 🔥 校验1：拉开跨度，防止抱团（最大号减最小号必须 >= 15）
-            if front[-1] - front[0] < 15:
-                continue
+            if front[-1] - front[0] < 15: continue
                 
-            # 🔥 校验2：允许 2 连号、极少量 3 连号，但坚决封杀顺子（4 连号及以上）
             consecutive = 1
             max_consecutive = 1
             for i in range(1, 5):
@@ -99,13 +121,9 @@ def generate_numbers(weights, last_front, last_back, count=1):
                     max_consecutive = max(max_consecutive, consecutive)
                 else:
                     consecutive = 1
-                    
-            if max_consecutive >= 4:
-                continue # 如果出现 4 连号，直接打回重摇
-                
+            if max_consecutive >= 4: continue
             break
 
-        # 后区
         bavail = list(range(1, 13))
         back = []
         for _ in range(2):
@@ -115,7 +133,6 @@ def generate_numbers(weights, last_front, last_back, count=1):
             bavail.remove(pick)
         back.sort()
         
-        # 生成反推逻辑
         reasons = []
         f_sum = sum(front)
         f_odd = sum(1 for n in front if n % 2 == 1)
@@ -132,11 +149,7 @@ def generate_numbers(weights, last_front, last_back, count=1):
             else:
                 reasons.append(f"**【{pos_name}位推演】** 基于历史均值 {avg} 及近三十期概率权重，锁定 **{val:02d}**。")
             
-        results.append({
-            "front": front, 
-            "back": back, 
-            "reason": reasons
-        })
+        results.append({"front": front, "back": back, "reason": reasons})
     return results
 
 def save_predictions_batch(weights, target_period, predictions, user_id):

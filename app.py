@@ -45,12 +45,31 @@ if not weights:
 
 tabs = st.tabs(["🎯 综合预测", "📈 历史关联", "🔬 深度生成与反推", "📋 复盘与差异比对", "🔪 科学杀号器"])
 
+# 🔥 修复：把后区和最终推荐补回来了！
 with tabs[0]:
     st.markdown("### 🌟 前区 Top 7 黄金参考号")
     sorted_f = sorted(weights["front_prob"].items(), key=lambda x: x[1], reverse=True)[:7]
     cols = st.columns(7)
     for i, (num, prob) in enumerate(sorted_f):
-        with cols[i]: st.metric(label=f"号码 {num:02d}", value=f"{prob}%")
+        with cols[i]:
+            # 用 st.write 防止手机端字体太长被遮挡
+            st.metric(label=f"号码 {num:02d}", value=f"{prob}%")
+
+    st.markdown("### 🔵 后区 Top 3 核心参考号")
+    sorted_b = sorted(weights["back_prob"].items(), key=lambda x: x[1], reverse=True)[:3]
+    b_cols = st.columns(3)
+    for i, (num, prob) in enumerate(sorted_b):
+        with b_cols[i]:
+            st.metric(label=f"号码 {num:02d}", value=f"{prob}%")
+
+    st.divider()
+    st.markdown("### 🏆 最终量化决策推荐")
+    top7_front = sorted([num for num, prob in sorted_f])
+    top3_back = sorted([num for num, prob in sorted_b])
+    
+    # 用高亮框展示
+    st.success(f"**🔥 前区精选 (Top 7)：** \n\n## {'  '.join([f'{n:02d}' for n in top7_front])}")
+    st.info(f"**🔥 后区精选 (Top 3)：** \n\n## {'  '.join([f'{n:02d}' for n in top3_back])}")
 
 with tabs[1]:
     st.markdown("### 📈 历史位置规律")

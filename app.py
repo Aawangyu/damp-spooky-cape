@@ -36,15 +36,14 @@ else:
         st.rerun()
 
 st.title("🧬 大乐透全维量化预测系统")
-st.caption(f"当前账号：**{user_id}** | 核心功能：逐位归因反推 · 开奖差异比对")
-
 engine.init_db()
 weights = engine.get_advanced_weights()
+
 if not weights:
     st.warning("数据量不足。")
     st.stop()
 
-tabs = st.tabs(["🎯 综合预测", "📈 历史关联解析", "🔬 深度生成与反推", "📋 复盘与差异比对", "🔪 科学杀号器"])
+tabs = st.tabs(["🎯 综合预测", "📈 历史关联", "🔬 深度生成与反推", "📋 复盘与差异比对", "🔪 科学杀号器"])
 
 with tabs[0]:
     st.markdown("### 🌟 前区 Top 7 黄金参考号")
@@ -53,36 +52,19 @@ with tabs[0]:
     for i, (num, prob) in enumerate(sorted_f):
         with cols[i]: st.metric(label=f"号码 {num:02d}", value=f"{prob}%")
 
-    st.markdown("### 🔵 后区 Top 3 核心参考号")
-    sorted_b = sorted(weights["back_prob"].items(), key=lambda x: x[1], reverse=True)[:3]
-    b_cols = st.columns(3)
-    for i, (num, prob) in enumerate(sorted_b):
-        with b_cols[i]: st.metric(label=f"号码 {num:02d}", value=f"{prob}%")
-
-# 🔥 重构：位置关联解析
 with tabs[1]:
-    st.markdown("### 📈 历史位置规律关联分析")
-    st.info("分析上一期各位置的落点，与本期该位置数学引力区间的关联。")
-    
+    st.markdown("### 📈 历史位置规律")
     last_draw = weights["latest_three"][0] if weights["latest_three"] else None
     if last_draw:
-        st.markdown(f"**上期开奖（{last_draw[0]}）**：前区 `{[last_draw[i] for i in range(2,7)]}` | 后区 `{[last_draw[i] for i in range(7,9)]}`")
-        
-        st.markdown("#### 逐位联系推演")
-        for i in range(5):
-            val = last_draw[2+i]
-            avg = weights["f_pos_avgs"][i]
-            st.markdown(f"**第 {i+1} 位**：上期开出 `{val}`，历史均值 `{avg}`。本期系统将围绕均值 `{avg}` 与上期偏移量进行综合计算，寻找高概率的反弹或回落点。")
+        st.info(f"上期开奖：前区 {[last_draw[i] for i in range(2,7)]}，系统将在此基础上计算位置引力偏移。")
 
-# 🔥 重构：生成页面增加“反推”按钮
 with tabs[2]:
     st.markdown("### 🔬 智能量化生成")
-    
     latest_period = weights["latest_three"][0][0] if weights["latest_three"] else "26123"
     try: next_period = str(int(latest_period) + 1)
     except: next_period = "下一期"
         
-    target = st.text_input("目标期号", value=next_period)
+    target = st.text_input("目标期号（可修改）", value=next_period)
     
     col1, col2, col3 = st.columns(3)
     with col1: btn1 = st.button("🎯 生成 1 注推荐")
@@ -96,27 +78,23 @@ with tabs[2]:
         lf = latest[0][2:7] if latest else None
         lb = latest[0][7:9] if latest else None
         
-        with st.spinner(f"生成中..."):
+        with st.spinner(f"正在生成..."):
             results = engine.generate_numbers(weights, lf, lb, count=gen_count)
             engine.save_predictions_batch(weights, target, results, user_id)
-            
-            # 存入 session_state 以便反推
             st.session_state['last_results'] = results
-            st.success(f"✅ 已生成 {gen_count} 注！")
+            st.success(f"✅ 已生成 {gen_count} 注，并已存入数据库！")
             
-    # 渲染结果与反推
     if 'last_results' in st.session_state:
         for idx, res in enumerate(st.session_state['last_results']):
             st.markdown(f"--- \n**第 {idx+1} 注**")
             st.code(f"前区：{res['front']}  |  后区：{res['back']}", language="text")
             
-            # 反推按钮
-            if st.button(f"🔍 查看第 {idx+1} 注反推逻辑", key=f"reverse_{idx}"):
-                st.info("### 🧠 数学模型推导过程：\n\n" + "\n\n".join(res['reason']))
+            with st.expander(f"🔍 查看第 {idx+1} 注反推推演过程"):
+                for reason in res['reason']:
+                    st.write(reason)
 
-# 🔥 重构：复盘增加差异归因按钮
 with tabs[3]:
-    st.subheader(f"📋 {user_id} 的模拟记录")
+    st.subheader(f"📋 你的历史模拟记录")
     if st.button("🔄 同步开奖复盘"):
         engine.review_all()
         st.success("复盘完成！")
@@ -124,23 +102,18 @@ with tabs[3]:
         
     preds = engine.get_predictions(user_id)
     if preds:
-        # 获取所有开奖数据用于比对
         draws = {r[0]: r for r in engine.get_all_draws()}
-        
         for p in preds:
             pid, tp, fj, bj, created, level, hit_f, hit_b = p
-            
-            col1, col2 = st.columns([3, 1])
+            col1, col2 = st.columns([4, 1])
             with col1:
                 st.markdown(f"**ID {pid}** | 期号 `{tp}` | 预测：前区 `{json.loads(fj)}` 后区 `{json.loads(bj)}` | 状态：**{level}**")
             with col2:
-                # 如果已开奖，提供比对按钮
                 if tp in draws:
                     if st.button("📊 差异归因", key=f"gap_{pid}"):
                         actual = draws[tp]
                         act_f = [actual[1], actual[2], actual[3], actual[4], actual[5]]
                         act_b = [actual[6], actual[7]]
-                        
                         report = engine.analyze_gap(json.loads(fj), json.loads(bj), act_f, act_b)
                         st.warning(f"**实际开奖：** 前区 `{act_f}` 后区 `{act_b}`\n\n---\n**分析报告：**\n\n{report}")
     else:

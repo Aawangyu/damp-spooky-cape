@@ -4,6 +4,7 @@ import json
 import math
 from datetime import datetime
 from collections import Counter
+from itertools import combinations
 
 DB = "dlt.db"
 FRONT_POOL = list(range(1, 36))
@@ -26,7 +27,6 @@ def init_db():
         pred_odd INTEGER, actual_odd INTEGER, odd_delta INTEGER,
         reason TEXT, created_at TEXT
     )""")
-    # 极限回测记录表
     conn.execute("""CREATE TABLE IF NOT EXISTS backtest_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, period TEXT, 
         simulations INTEGER, deep_analysis TEXT, created_at TEXT
@@ -126,6 +126,7 @@ def generate_scientific(weights, last_front, last_back, user_id):
     correction = get_global_correction(user_id) 
     candidates = []
 
+    # ================= 前区：8000次模拟选优 =================
     for _ in range(8000):
         available = list(range(1, 36))
         front = [random.choices(available, weights=[fw[n] + 0.01 for n in available], k=1)[0] for _ in range(5)]
@@ -135,15 +136,7 @@ def generate_scientific(weights, last_front, last_back, user_id):
         else:
             front.sort()
 
-        bavail = list(range(1, 13))
-        back = [random.choices(bavail, weights=[bw[n] + 0.01 for n in bavail], k=1)[0] for _ in range(2)]
-        back = list(dict.fromkeys(back))
-        if len(back) < 2:
-            back = sorted(random.sample(range(1, 13), 2))
-        else:
-            back.sort()
-
-        score = sum([fw[n] for n in front]) + sum([bw[n] for n in back])
+        score = sum([fw[n] for n in front])
         s = sum(front)
         if 75 <= s <= 110: score += 10.0
         odd = sum(1 for n in front if n % 2 == 1)
@@ -155,14 +148,48 @@ def generate_scientific(weights, last_front, last_back, user_id):
             elif repeats > 2: score -= 15.0
         
         if abs(s - (90 + correction["avg_sum_delta"])) < 10: score += 3.0
-        candidates.append({"front": front, "back": back, "score": score})
+        candidates.append({"front": front, "score": score})
 
     candidates.sort(key=lambda x: x["score"], reverse=True)
     pool_size = min(30, len(candidates))
-    best_pick = random.choice(candidates[:pool_size])
-    return best_pick["front"], best_pick["back"]
+    best_front = random.choice(candidates[:pool_size])["front"]
 
-# 🔥 极限回测函数
+    # ================= 后区：全量组合打分，结合上期规律，随机择优 =================
+    all_back_combos = list(combinations(range(1, 13), 2))
+    back_candidates = []
+
+    for combo in all_back_combos:
+        b1, b2 = combo
+        
+        # 1. 基础权重分
+        base_score = bw[b1] + bw[b2]
+        
+        # 2. 上期规律联系分（重号/邻号机制）
+        trend_score = 0
+        if last_back:
+            for num in combo:
+                if num in last_back:
+                    trend_score += 1.5  # 重号加分（符合落号规律）
+                if (num - 1 in last_back) or (num + 1 in last_back):
+                    trend_score += 2.5  # 邻号给更高分（符合边号规律）
+                    
+        total_score = base_score + trend_score
+        
+        # 3. 惩罚机制：禁止完全复制上期的后区组合
+        if last_back and set(combo) == set(last_back):
+            total_score -= 20.0
+            
+        back_candidates.append({"back": list(combo), "score": total_score})
+
+    # 对后区所有组合排序
+    back_candidates.sort(key=lambda x: x["score"], reverse=True)
+    
+    # 在排名前 5 的后区神仙组合里，随机抽一个给你！
+    # 这样既保证了绝对的合理性（包含上期邻号/重号），又不会死板地每次出 09, 11
+    top_back_pool = random.choice(back_candidates[:5])["back"]
+
+    return best_front, top_back_pool
+
 def simulate_hit_test(weights, target_period, user_id):
     conn = get_conn()
     row = conn.execute("SELECT front1,front2,front3,front4,front5,back1,back2 FROM draws WHERE period = ?", (target_period,)).fetchone()
@@ -222,7 +249,6 @@ def simulate_hit_test(weights, target_period, user_id):
     conn.close()
     return max_simulations, "超过 500 万次仍未中，符合极低的中奖率"
 
-# 🔥 获取回测历史
 def get_backtest_logs(user_id):
     init_db()
     conn = get_conn()

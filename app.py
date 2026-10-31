@@ -3,7 +3,6 @@ import pandas as pd
 import engine
 import json
 import extra_streamlit_components as stx
-import plotly.graph_objects as go
 
 st.set_page_config(page_title="大乐透量化预测系统", layout="wide")
 
@@ -26,7 +25,6 @@ if not st.session_state.logged_in:
             st.session_state.user_id = username.strip()
             cookie_manager.set("dlt_user", username.strip(), expires_at=None)
             st.rerun()
-    st.info("👈 请在左侧输入 ID 登录。")
     st.stop()
 else:
     user_id = st.session_state.user_id
@@ -38,15 +36,15 @@ else:
         st.rerun()
 
 st.title("🧬 大乐透全维量化预测系统")
-st.caption(f"当前账号：**{user_id}** | 融合：时间衰减 · 位置连线 · 深度反推")
+st.caption(f"当前账号：**{user_id}** | 核心功能：逐位归因反推 · 开奖差异比对")
 
 engine.init_db()
 weights = engine.get_advanced_weights()
 if not weights:
-    st.warning("数据量不足，无法建立模型。")
+    st.warning("数据量不足。")
     st.stop()
 
-tabs = st.tabs(["🎯 综合预测与反推", "📈 位置对比走势图", "🔬 深度生成与套票", "📋 模拟与盈亏", "🔪 科学杀号器", "🏹 极限回测"])
+tabs = st.tabs(["🎯 综合预测", "📈 历史关联解析", "🔬 深度生成与反推", "📋 复盘与差异比对", "🔪 科学杀号器"])
 
 with tabs[0]:
     st.markdown("### 🌟 前区 Top 7 黄金参考号")
@@ -61,69 +59,31 @@ with tabs[0]:
     for i, (num, prob) in enumerate(sorted_b):
         with b_cols[i]: st.metric(label=f"号码 {num:02d}", value=f"{prob}%")
 
-    st.divider()
-    st.markdown("### 🏆 最终量化决策推荐")
-    top7_front = sorted([num for num, prob in sorted_f])
-    top3_back = sorted([num for num, prob in sorted_b])
-    st.success(f"**🔥 前区精选 (Top 7)：** \n\n## {'  '.join([f'{n:02d}' for n in top7_front])}")
-    st.info(f"**🔥 后区精选 (Top 3)：** \n\n## {'  '.join([f'{n:02d}' for n in top3_back])}")
-    
-    if st.button("🔄 反推：为什么推荐这些号码？", type="primary"):
-        st.info("""
-        **反推解析：**
-        1. **时间衰减**：系统赋予了最近 30 期的数据极高权重，因此推荐的是近期状态最火热/最符合回补概率的。
-        2. **综合概率**：结合遗漏值、上期重邻号和衰减频率得出的期望值。
-        """)
-
-# 🔥 全新的位置对比走势图
+# 🔥 重构：位置关联解析
 with tabs[1]:
-    st.markdown("### 📈 位置对比连线图")
-    st.info("比较上一期真实开奖号码 vs 你最新生成的一注号码。直观看出每位数字的升降趋势。")
+    st.markdown("### 📈 历史位置规律关联分析")
+    st.info("分析上一期各位置的落点，与本期该位置数学引力区间的关联。")
     
-    latest_draws = weights["latest_three"]
-    user_preds = engine.get_predictions(user_id)
-    
-    if latest_draws and user_preds:
-        last_draw = latest_draws[0]
-        actual_f = [last_draw[2], last_draw[3], last_draw[4], last_draw[5], last_draw[6]]
+    last_draw = weights["latest_three"][0] if weights["latest_three"] else None
+    if last_draw:
+        st.markdown(f"**上期开奖（{last_draw[0]}）**：前区 `{[last_draw[i] for i in range(2,7)]}` | 后区 `{[last_draw[i] for i in range(7,9)]}`")
         
-        latest_pred = user_preds[0]
-        pred_f = json.loads(latest_pred[2])
-        
-        fig = go.Figure()
-        # 画前区连线（从开奖号到推荐号）
+        st.markdown("#### 逐位联系推演")
         for i in range(5):
-            fig.add_trace(go.Scatter(
-                x=["上期开奖", "我的预测"], y=[actual_f[i], pred_f[i]],
-                mode='lines+markers+text',
-                text=[f"第{i+1}位: {actual_f[i]}", f"{pred_f[i]}"],
-                textposition="top center",
-                name=f"位置{i+1}",
-                line=dict(width=3)
-            ))
-            
-        fig.update_layout(
-            title="前区 5 个位置独立走势对比",
-            yaxis=dict(title="号码值", range=[0, 36]),
-            height=400,
-            margin=dict(l=20, r=20, t=40, b=20)
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("暂无数据，请先去『深度生成』页面生成一注号码！")
+            val = last_draw[2+i]
+            avg = weights["f_pos_avgs"][i]
+            st.markdown(f"**第 {i+1} 位**：上期开出 `{val}`，历史均值 `{avg}`。本期系统将围绕均值 `{avg}` 与上期偏移量进行综合计算，寻找高概率的反弹或回落点。")
 
+# 🔥 重构：生成页面增加“反推”按钮
 with tabs[2]:
     st.markdown("### 🔬 智能量化生成")
     
     latest_period = weights["latest_three"][0][0] if weights["latest_three"] else "26123"
-    try:
-        next_period = str(int(latest_period) + 1)
-    except:
-        next_period = "下一期"
+    try: next_period = str(int(latest_period) + 1)
+    except: next_period = "下一期"
         
-    target = st.text_input("目标期号（已自动推算，可修改）", value=next_period)
+    target = st.text_input("目标期号", value=next_period)
     
-    st.markdown("#### 选择生成模式")
     col1, col2, col3 = st.columns(3)
     with col1: btn1 = st.button("🎯 生成 1 注推荐")
     with col2: btn5 = st.button("📦 生成 5 注推荐")
@@ -136,18 +96,25 @@ with tabs[2]:
         lf = latest[0][2:7] if latest else None
         lb = latest[0][7:9] if latest else None
         
-        with st.spinner(f"正在生成 {gen_count} 注..."):
+        with st.spinner(f"生成中..."):
             results = engine.generate_numbers(weights, lf, lb, count=gen_count)
             engine.save_predictions_batch(weights, target, results, user_id)
             
-            st.success(f"✅ 已生成 {gen_count} 注并存入数据库！")
+            # 存入 session_state 以便反推
+            st.session_state['last_results'] = results
+            st.success(f"✅ 已生成 {gen_count} 注！")
             
-            # 结果直接展示在当前页面下方
-            for idx, res in enumerate(results):
-                st.markdown(f"**第 {idx+1} 注**")
-                st.code(f"前区：{res['front']}  |  后区：{res['back']}", language="text")
-                st.caption(f"💡 依据：{res['reason']}")
+    # 渲染结果与反推
+    if 'last_results' in st.session_state:
+        for idx, res in enumerate(st.session_state['last_results']):
+            st.markdown(f"--- \n**第 {idx+1} 注**")
+            st.code(f"前区：{res['front']}  |  后区：{res['back']}", language="text")
+            
+            # 反推按钮
+            if st.button(f"🔍 查看第 {idx+1} 注反推逻辑", key=f"reverse_{idx}"):
+                st.info("### 🧠 数学模型推导过程：\n\n" + "\n\n".join(res['reason']))
 
+# 🔥 重构：复盘增加差异归因按钮
 with tabs[3]:
     st.subheader(f"📋 {user_id} 的模拟记录")
     if st.button("🔄 同步开奖复盘"):
@@ -157,12 +124,25 @@ with tabs[3]:
         
     preds = engine.get_predictions(user_id)
     if preds:
-        df = pd.DataFrame(preds, columns=["ID", "期号", "前区", "后区", "时间", "结果", "前区命中", "后区命中"])
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        # 获取所有开奖数据用于比对
+        draws = {r[0]: r for r in engine.get_all_draws()}
         
-        wins = df[~df["结果"].isin(["未中", "待开奖"])]
-        if not wins.empty:
-            st.success(f"🎉 恭喜！你一共中奖了 {len(wins)} 注！")
+        for p in preds:
+            pid, tp, fj, bj, created, level, hit_f, hit_b = p
+            
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(f"**ID {pid}** | 期号 `{tp}` | 预测：前区 `{json.loads(fj)}` 后区 `{json.loads(bj)}` | 状态：**{level}**")
+            with col2:
+                # 如果已开奖，提供比对按钮
+                if tp in draws:
+                    if st.button("📊 差异归因", key=f"gap_{pid}"):
+                        actual = draws[tp]
+                        act_f = [actual[1], actual[2], actual[3], actual[4], actual[5]]
+                        act_b = [actual[6], actual[7]]
+                        
+                        report = engine.analyze_gap(json.loads(fj), json.loads(bj), act_f, act_b)
+                        st.warning(f"**实际开奖：** 前区 `{act_f}` 后区 `{act_b}`\n\n---\n**分析报告：**\n\n{report}")
     else:
         st.info("暂无记录。")
 
@@ -171,34 +151,9 @@ with tabs[4]:
     col_a, col_b = st.columns(2)
     with col_a: kill_f = st.multiselect("选择要杀的前区号码：", list(range(1, 36)))
     with col_b: kill_b = st.multiselect("选择要杀的后区号码：", list(range(1, 13)))
-        
-    if st.button("📊 分析杀号合理性"):
-        if not kill_f and not kill_b: st.warning("请至少选择一个号码！")
-        else:
-            latest = weights["latest_three"]
-            lf = latest[0][2:7] if latest else []
-            lb = latest[0][7:9] if latest else []
-            for n in kill_f: st.warning(engine.analyze_kill_number(n, True, lf, lb))
-            for n in kill_b: st.warning(engine.analyze_kill_number(n, False, lf, lb))
-
-with tabs[5]:
-    st.markdown("### 🏹 极限模拟回测器")
-    test_period = st.text_input("输入你想测试的历史期号：", placeholder="例如 26123")
-    if st.button("🚀 开始疯狂回测", type="primary"):
-        if not test_period: st.warning("请输入期号！")
-        else:
-            with st.spinner("引擎正在疯狂摇奖中..."):
-                hit_count, msg = engine.simulate_hit_test(weights, test_period, user_id)
-                if hit_count:
-                    st.balloons()
-                    st.success(f"🎉 **奇迹发生了！** 系统在模拟了 **{hit_count:,} 次** 后，成功摇出了 {test_period} 期的大奖号码！")
-                    st.markdown(f"**🔍 深度分析：**\n\n{msg}")
-                else:
-                    st.error(f"😭 **回测结束**：{msg}。")
-
-    st.divider()
-    st.markdown("#### 📜 我的历史回测档案")
-    logs = engine.get_backtest_logs(user_id)
-    if logs:
-        log_df = pd.DataFrame(logs, columns=["回测期号", "模拟次数", "深度归因分析", "回测时间"])
-        st.dataframe(log_df, use_container_width=True, hide_index=True)
+    if st.button("📊 分析合理性"):
+        latest = weights["latest_three"]
+        lf = latest[0][2:7] if latest else []
+        lb = latest[0][7:9] if latest else []
+        for n in kill_f: st.warning(engine.analyze_kill_number(n, True, lf, lb))
+        for n in kill_b: st.warning(engine.analyze_kill_number(n, False, lf, lb))

@@ -2,7 +2,6 @@ import sqlite3
 import random
 import json
 import math
-import requests
 from datetime import datetime
 
 DB = "dlt.db"
@@ -23,31 +22,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-def fetch_latest_draw():
-    init_db()
-    base = "https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=30&isVerify=1&pageNo=1"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-    try:
-        resp = requests.get(base, headers=headers, timeout=10)
-        if resp.status_code != 200:
-            return False, "体彩官网防火墙拒绝了 Streamlit 云端 IP，请在本地更新。"
-        data = resp.json()
-        items = data["value"]["list"]
-        conn = get_conn()
-        new_count = 0
-        for item in items:
-            parts = item["lotteryUnsortDrawresult"].replace("+", " ").split()
-            nums = [int(x) for x in parts]
-            cur = conn.execute("INSERT OR IGNORE INTO draws VALUES (?,?,?,?,?,?,?,?,?)",
-                (item["lotteryDrawNum"], item["lotterySaleEndtime"].split(" ")[0],
-                 nums[0], nums[1], nums[2], nums[3], nums[4], nums[5], nums[6]))
-            new_count += cur.rowcount
-        conn.commit()
-        conn.close()
-        return True, f"成功同步！新增 {new_count} 期最新数据。"
-    except Exception as e:
-        return False, "云端 IP 被官网拦截，请使用本地数据更新。"
-        
 def draw_count():
     init_db()
     conn = get_conn()

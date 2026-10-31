@@ -35,17 +35,6 @@ else:
         cookie_manager.delete("dlt_user")
         st.rerun()
 
-# 🔥 侧边栏新增：一键更新数据
-st.sidebar.divider()
-if st.sidebar.button("🔄 一键拉取最新开奖数据"):
-    with st.sidebar.spinner("正在向体彩官网请求..."):
-        success, msg = engine.fetch_latest_draw()
-        if success:
-            st.sidebar.success(msg)
-            st.rerun()
-        else:
-            st.sidebar.error(msg)
-
 st.title("🧬 大乐透全维量化预测系统")
 engine.init_db()
 weights = engine.get_advanced_weights()
@@ -59,8 +48,6 @@ tabs = st.tabs(["🎯 综合预测", "📈 历史关联", "🔬 深度生成与�
 with tabs[0]:
     st.markdown("### 🌟 前区 Top 7 黄金参考号")
     sorted_f = sorted(weights["front_prob"].items(), key=lambda x: x[1], reverse=True)[:7]
-    
-    # 🔥 修复手机端显示不全：不用网格，直接文字加粗
     f_text = "  |  ".join([f"**{num:02d}** ({prob}%)" for num, prob in sorted_f])
     st.info(f"**号码与概率：**\n\n{f_text}")
 
